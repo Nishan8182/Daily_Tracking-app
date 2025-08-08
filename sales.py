@@ -6,7 +6,7 @@ from fpdf import FPDF
 import tempfile
 import os
 
-st.title("Sales and Targets by Salesman - KA and Talabat")
+st.title(" Nishan Sales report- KA and Talabat")
 
 def add_fig_to_pdf(pdf, fig, title):
     pdf.add_page()
@@ -199,3 +199,4 @@ if uploaded_file:
 
 else:
     st.info("Please upload your Excel file with sheets 'sales data' and 'Target'.")
+
