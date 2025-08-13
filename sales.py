@@ -8,7 +8,7 @@ from pptx.dml.color import RGBColor
 import io
 
 # --- Page config ---
-st.set_page_config(page_title="Sales Tracking Dashboard", layout="wide")
+st.set_page_config(page_title=" Welcome to Haneef Data", layout="wide")
 
 # --- Cache function ---
 @st.cache_data
@@ -191,3 +191,4 @@ elif choice == "Sales Tracking":
 
     else:
         st.info("Please upload your Excel file with sheets 'sales data' and 'Target'.")
+
