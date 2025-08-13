@@ -3,192 +3,191 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from pptx import Presentation
-from pptx.util import Inches
+from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
 import io
-import os
 
+# --- Page config ---
 st.set_page_config(page_title="Sales Tracking Dashboard", layout="wide")
 
-# --- Helper function to load Excel ---
-def load_data(uploaded_file):
+# --- Cache function ---
+@st.cache_data
+def load_data(file):
     try:
-        xls = pd.ExcelFile(uploaded_file)
-        sales_df = pd.read_excel(xls, sheet_name="sales data")
-        target_df = pd.read_excel(xls, sheet_name="Target")
+        sales_df = pd.read_excel(file, sheet_name="sales data")
+        target_df = pd.read_excel(file, sheet_name="Target")
         return sales_df, target_df
     except Exception as e:
         st.error(f"Error loading Excel file: {e}")
         return None, None
 
-# --- PowerPoint export functions ---
-def add_table_slide(prs, df, title, cmap="Blues"):
-    slide = prs.slides.add_slide(prs.slide_layouts[5])
-    slide.shapes.title.text = title
-    rows, cols = df.shape
-    table = slide.shapes.add_table(rows+1, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(4)).table
-
-    # Header
-    for j, col_name in enumerate(df.columns):
-        table.cell(0, j).text = str(col_name)
-
-    # Body
-    for i, row in enumerate(df.itertuples(index=False), start=1):
-        for j, value in enumerate(row):
-            if isinstance(value, (int, float)):
-                table.cell(i, j).text = f"{int(value):,}"
-            else:
-                table.cell(i, j).text = str(value)
-
-def add_chart_slide(prs, fig, title):
-    slide = prs.slides.add_slide(prs.slide_layouts[5])
-    slide.shapes.title.text = title
-    img_stream = io.BytesIO()
-    fig.savefig(img_stream, format='png', bbox_inches='tight')
-    img_stream.seek(0)
-    slide.shapes.add_picture(img_stream, Inches(0.5), Inches(1.5), width=Inches(8))
-
-def create_pptx(report_df, billing_type_df, py_name_df, fig_salesman, fig_ka, fig_talabat, fig_trend, fig_ka_trend):
+# --- PPTX helper ---
+def create_pptx(report_df, billing_type_df, py_name_df, fig_sales, fig_ka, fig_talabat, fig_daily, fig_daily_ka):
     prs = Presentation()
+
     # Title slide
     slide = prs.slides.add_slide(prs.slide_layouts[0])
     slide.shapes.title.text = "Sales & Targets Report"
     slide.placeholders[1].text = "Generated from Sales Data"
 
-    # Sales & Targets Table
-    add_table_slide(prs, report_df.reset_index(), "Sales & Targets Summary")
+    # Helper to add table slide
+    def add_table_slide(df, title, cmap=None):
+        slide = prs.slides.add_slide(prs.slide_layouts[5])
+        slide.shapes.title.text = title
+        rows, cols = df.shape
+        table = slide.shapes.add_table(rows+1, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(4)).table
+        # Header
+        for j, col in enumerate(df.columns):
+            table.cell(0, j).text = str(col)
+            table.cell(0, j).text_frame.paragraphs[0].font.bold = True
+        # Data
+        for i, row in enumerate(df.itertuples(index=False), start=1):
+            for j, val in enumerate(row):
+                table.cell(i, j).text = f"{int(val):,}" if isinstance(val, (int, float)) else str(val)
 
-    # Billing Type Table
-    add_table_slide(prs, billing_type_df.reset_index(), "Sales by Billing Type per Salesman")
+    # Helper to add chart slide
+    def add_chart_slide(fig, title):
+        slide = prs.slides.add_slide(prs.slide_layouts[5])
+        slide.shapes.title.text = title
+        img_stream = io.BytesIO()
+        fig.savefig(img_stream, format='png', bbox_inches='tight')
+        img_stream.seek(0)
+        slide.shapes.add_picture(img_stream, Inches(0.5), Inches(1.5), width=Inches(8))
 
-    # PY Name 1 Table
-    add_table_slide(prs, py_name_df.reset_index(), "Sales by PY Name 1")
+    # Add tables
+    add_table_slide(report_df, "Sales & Targets Summary")
+    add_table_slide(billing_type_df.reset_index(), "Sales by Billing Type per Salesman")
+    add_table_slide(py_name_df.reset_index(), "Sales by PY Name 1")
 
-    # Charts
-    add_chart_slide(prs, fig_salesman, "Sales and Targets by Salesman")
-    add_chart_slide(prs, fig_ka, "KA Target vs Sales")
-    add_chart_slide(prs, fig_talabat, "Talabat Target vs Sales")
-    add_chart_slide(prs, fig_trend, "Daily Sales Trend - All Salesmen")
-    add_chart_slide(prs, fig_ka_trend, "Daily KA Sales Trend")
+    # Add charts
+    add_chart_slide(fig_sales, "Sales & Targets by Salesman")
+    add_chart_slide(fig_ka, "KA Target vs Sales")
+    add_chart_slide(fig_talabat, "Talabat Target vs Sales")
+    add_chart_slide(fig_daily, "Daily Sales Trend - All Salesmen")
+    add_chart_slide(fig_daily_ka, "Daily KA Sales Trend")
 
     pptx_stream = io.BytesIO()
     prs.save(pptx_stream)
     pptx_stream.seek(0)
     return pptx_stream
 
-# --- MAIN APP ---
-st.title("📊 Sales Tracking Dashboard")
+# --- Sidebar ---
+st.sidebar.title("Menu")
+menu = ["Home", "Sales Tracking"]
+choice = st.sidebar.selectbox("Menu", menu)
 
-uploaded_file = st.file_uploader("Upload your Excel file", type=["xlsx"])
+# --- Home ---
+if choice == "Home":
+    st.title("🏠 Welcome to Sales Tracking Dashboard")
+    st.markdown("### Use the sidebar to navigate to Sales Tracking.")
 
-if uploaded_file:
-    sales_df, target_df = load_data(uploaded_file)
+# --- Sales Tracking ---
+elif choice == "Sales Tracking":
+    st.title("📊 Sales Tracking Dashboard")
 
-    if sales_df is not None and target_df is not None:
-        # All Salesmen list
-        all_salesmen = sales_df["Driver Name EN"].unique()
-        # KA & Talabat sales
-        ka_sales = sales_df.groupby("Driver Name EN")["Net Value"].sum()
-        talabat_df = sales_df[sales_df["PY Name 1"]=="STORES SERVICES KUWAIT CO."]
-        talabat_sales = talabat_df.groupby("Driver Name EN")["Net Value"].sum()
+    uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
+    if uploaded_file:
+        sales_df, target_df = load_data(uploaded_file)
+        if sales_df is not None and target_df is not None:
 
-        # Targets
-        ka_targets = target_df.set_index("Driver Name EN")["KA Target"]
-        talabat_targets = target_df.set_index("Driver Name EN")["Talabat Target"]
+            # --- Process Sales & Targets ---
+            total_by_salesman = sales_df.groupby("Driver Name EN")["Net Value"].sum()
+            talabat_df = sales_df[sales_df["PY Name 1"] == "STORES SERVICES KUWAIT CO."]
+            talabat_sales_by_salesman = talabat_df.groupby("Driver Name EN")["Net Value"].sum()
 
-        # Combine all salesmen
-        all_index = ka_sales.index.union(talabat_sales.index).union(ka_targets.index).union(talabat_targets.index)
-        ka_sales = ka_sales.reindex(all_index, fill_value=0)
-        talabat_sales = talabat_sales.reindex(all_index, fill_value=0)
-        ka_targets = ka_targets.reindex(all_index, fill_value=0)
-        talabat_targets = talabat_targets.reindex(all_index, fill_value=0)
+            targets_series = target_df.set_index("Driver Name EN")["KA Target"]
+            talabat_targets_series = target_df.set_index("Driver Name EN")["Talabat Target"]
 
-        # Remaining gaps
-        gap_ka = (ka_targets - ka_sales).clip(lower=0)
-        gap_talabat = (talabat_targets - talabat_sales).clip(lower=0)
+            all_salesmen = total_by_salesman.index.union(talabat_sales_by_salesman.index).union(targets_series.index).union(talabat_targets_series.index)
+            total_by_salesman = total_by_salesman.reindex(all_salesmen, fill_value=0)
+            talabat_sales_by_salesman = talabat_sales_by_salesman.reindex(all_salesmen, fill_value=0)
+            targets_series = targets_series.reindex(all_salesmen, fill_value=0)
+            talabat_targets_series = talabat_targets_series.reindex(all_salesmen, fill_value=0)
 
-        # Report Table
-        report_df = pd.DataFrame({
-            "KA Total Sales": ka_sales,
-            "KA Target": ka_targets,
-            "Remaining to KA Target": gap_ka,
-            "Talabat Sales": talabat_sales,
-            "Talabat Target": talabat_targets,
-            "Remaining to Talabat Target": gap_talabat
-        })
+            gap_ka = (targets_series - total_by_salesman).clip(lower=0)
+            gap_talabat = (talabat_targets_series - talabat_sales_by_salesman).clip(lower=0)
 
-        st.subheader("Sales & Targets Summary")
-        st.dataframe(report_df.style.format("{:,.0f}").background_gradient(cmap="Blues"), use_container_width=True)
+            report_df = pd.DataFrame({
+                "KA Total Sales": total_by_salesman,
+                "KA Remaining": gap_ka,
+                "Talabat Sales": talabat_sales_by_salesman,
+                "Talabat Remaining": gap_talabat,
+                "KA Target": targets_series,
+                "Talabat Target": talabat_targets_series
+            })
 
-        # Billing Type
-        billing_type_df = sales_df.groupby(["Driver Name EN","Billing Type"])["Net Value"].sum().unstack(fill_value=0)
-        billing_type_df["Total"] = billing_type_df.sum(axis=1)
-        st.subheader("Sales by Billing Type per Salesman")
-        st.dataframe(billing_type_df.style.format("{:,.0f}").background_gradient(cmap="Blues"), use_container_width=True)
+            st.subheader("Sales & Targets Table")
+            st.dataframe(report_df.style.format("{:,.0f}").background_gradient(cmap="Blues"), use_container_width=True)
 
-        # PY Name 1
-        py_name_df = sales_df.groupby("PY Name 1")["Net Value"].sum().reset_index()
-        st.subheader("Sales by PY Name 1")
-        st.dataframe(py_name_df.style.format("{:,.0f}").background_gradient(subset=["Net Value"], cmap="Greens"), use_container_width=True)
+            # Billing Type Table
+            billing_type_by_salesman = sales_df.groupby(["Driver Name EN", "Billing Type"])["Net Value"].sum().unstack(fill_value=0)
+            billing_type_by_salesman["Total"] = billing_type_by_salesman.sum(axis=1)
+            st.subheader("Sales by Billing Type per Salesman")
+            st.dataframe(billing_type_by_salesman.style.format("{:,.0f}").background_gradient(cmap="Blues"), use_container_width=True)
 
-        # Sales & Targets by Salesman Chart
-        fig_salesman, ax = plt.subplots(figsize=(12,6))
-        y_pos = np.arange(len(all_index))
-        bar_width = 0.35
-        ax.bar(y_pos - bar_width/2, ka_sales, bar_width, label="KA Sales", color="skyblue")
-        ax.bar(y_pos - bar_width/2, gap_ka, bar_width, bottom=ka_sales, color="lightgray", label="KA Gap")
-        ax.bar(y_pos + bar_width/2, talabat_sales, bar_width, label="Talabat Sales", color="orange")
-        ax.bar(y_pos + bar_width/2, gap_talabat, bar_width, bottom=talabat_sales, color="lightgreen", label="Talabat Gap")
-        ax.set_xticks(y_pos)
-        ax.set_xticklabels(all_index, rotation=45)
-        ax.set_ylabel("Value")
-        for i, v in enumerate(ka_sales):
-            ax.text(i - bar_width/2, v + 0.02*v, f"{int(v):,}", ha='center', va='bottom')
-        for i, v in enumerate(talabat_sales):
-            ax.text(i + bar_width/2, v + 0.02*v, f"{int(v):,}", ha='center', va='bottom')
-        ax.legend()
-        st.pyplot(fig_salesman)
+            # PY Name 1 Table
+            py_name_df = sales_df.groupby("PY Name 1")["Net Value"].sum()
+            st.subheader("Sales by PY Name 1")
+            st.dataframe(py_name_df.to_frame().style.background_gradient(cmap="Greens").format("{:,.0f}"), use_container_width=True)
 
-        # KA Pie Chart
-        fig_ka, ax2 = plt.subplots()
-        ax2.pie([ka_sales.sum(), gap_ka.sum()], labels=["Sales","Gap"], autopct=lambda p: f'{int(round(p/100*ka_targets.sum())):,}')
-        ax2.set_title("KA Target vs Sales")
-        st.pyplot(fig_ka)
+            # --- Charts ---
+            # Sales & Targets by Salesman
+            fig_sales, ax = plt.subplots(figsize=(12, 6))
+            bar_width = 0.25
+            y_pos = np.arange(len(all_salesmen))
+            pos_total = y_pos - bar_width/2
+            pos_talabat = y_pos + bar_width/2
+            ax.barh(pos_total, total_by_salesman, height=bar_width, color='skyblue', label='KA Sales')
+            ax.barh(pos_total, gap_ka, left=total_by_salesman, height=bar_width, color='lightgray', label='KA Gap')
+            ax.barh(pos_talabat, talabat_sales_by_salesman, height=bar_width, color='orange', label='Talabat Sales')
+            ax.barh(pos_talabat, gap_talabat, left=talabat_sales_by_salesman, height=bar_width, color='lightgreen', label='Talabat Gap')
+            ax.set_yticks(y_pos)
+            ax.set_yticklabels(all_salesmen)
+            ax.invert_yaxis()
+            for i, v in enumerate(total_by_salesman):
+                ax.text(v+gap_ka[i]+500, pos_total[i], f"{int(v):,}", va='center')
+            for i, v in enumerate(talabat_sales_by_salesman):
+                ax.text(v+gap_talabat[i]+500, pos_talabat[i], f"{int(v):,}", va='center')
+            ax.set_title("Sales & Targets by Salesman")
+            ax.legend()
+            st.pyplot(fig_sales)
 
-        # Talabat Pie Chart
-        fig_talabat, ax3 = plt.subplots()
-        ax3.pie([talabat_sales.sum(), gap_talabat.sum()], labels=["Sales","Gap"], autopct=lambda p: f'{int(round(p/100*talabat_targets.sum())):,}')
-        ax3.set_title("Talabat Target vs Sales")
-        st.pyplot(fig_talabat)
+            # KA Pie
+            fig_ka, ax2 = plt.subplots()
+            ax2.pie([total_by_salesman.sum(), gap_ka.sum()], labels=[f"Sales {int(total_by_salesman.sum()):,}", f"Gap {int(gap_ka.sum()):,}"], colors=['skyblue', 'lightgray'])
+            ax2.set_title("KA Target vs Sales")
+            st.pyplot(fig_ka)
 
-        # Daily Sales Trend
-        daily_trend = sales_df.groupby(["Billing Date","Driver Name EN"])["Net Value"].sum().reset_index()
-        fig_trend, ax4 = plt.subplots(figsize=(12,6))
-        for salesman in all_index:
-            sub = daily_trend[daily_trend["Driver Name EN"]==salesman]
-            ax4.plot(sub["Billing Date"], sub["Net Value"], marker='o', label=salesman)
-        ax4.set_title("Daily Sales Trend - All Salesmen")
-        ax4.set_ylabel("Value")
-        ax4.legend()
-        plt.xticks(rotation=45)
-        st.pyplot(fig_trend)
+            # Talabat Pie
+            fig_talabat, ax3 = plt.subplots()
+            ax3.pie([talabat_sales_by_salesman.sum(), gap_talabat.sum()], labels=[f"Sales {int(talabat_sales_by_salesman.sum()):,}", f"Gap {int(gap_talabat.sum()):,}"], colors=['orange', 'lightgreen'])
+            ax3.set_title("Talabat Target vs Sales")
+            st.pyplot(fig_talabat)
 
-        # Daily KA Trend
-        daily_ka = sales_df.groupby("Billing Date")["Net Value"].sum().reset_index()
-        fig_ka_trend, ax5 = plt.subplots(figsize=(12,6))
-        ax5.plot(daily_ka["Billing Date"], daily_ka["Net Value"], marker='o', color='skyblue')
-        ax5.set_title("Daily KA Sales Trend")
-        ax5.set_ylabel("Value")
-        plt.xticks(rotation=45)
-        st.pyplot(fig_ka_trend)
+            # Daily Sales Trend - All Salesmen
+            daily_sales = sales_df.groupby(["Billing Date", "Driver Name EN"])["Net Value"].sum().reset_index()
+            fig_daily, ax4 = plt.subplots(figsize=(12, 6))
+            for s in all_salesmen:
+                sub_df = daily_sales[daily_sales["Driver Name EN"] == s]
+                ax4.plot(sub_df["Billing Date"], sub_df["Net Value"], marker='o', label=s)
+            ax4.set_title("Daily Sales Trend - All Salesmen")
+            plt.xticks(rotation=45)
+            ax4.legend()
+            st.pyplot(fig_daily)
 
-        # Download PPTX
-        if st.button("Download PowerPoint Report"):
-            pptx_data = create_pptx(report_df, billing_type_df, py_name_df, fig_salesman, fig_ka, fig_talabat, fig_trend, fig_ka_trend)
-            st.download_button(
-                label="Download PPTX",
-                data=pptx_data,
-                file_name="sales_report.pptx",
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            )
-else:
-    st.info("Please upload your Excel file with sheets 'sales data' and 'Target'.")
+            # Daily KA Sales Trend
+            daily_ka_sales = sales_df.groupby("Billing Date")["Net Value"].sum()
+            fig_daily_ka, ax5 = plt.subplots()
+            ax5.plot(daily_ka_sales.index, daily_ka_sales.values, marker='o', color='skyblue')
+            ax5.set_title("Daily KA Sales Trend")
+            plt.xticks(rotation=45)
+            st.pyplot(fig_daily_ka)
+
+            # --- Download PPTX ---
+            if st.button("Download Report as PPTX"):
+                pptx_data = create_pptx(report_df, billing_type_by_salesman, py_name_df, fig_sales, fig_ka, fig_talabat, fig_daily, fig_daily_ka)
+                st.download_button("Download PPTX", data=pptx_data, file_name="sales_report.pptx",
+                                   mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+
+    else:
+        st.info("Please upload your Excel file with sheets 'sales data' and 'Target'.")
