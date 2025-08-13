@@ -78,8 +78,8 @@ choice = st.sidebar.selectbox("Menu", menu)
 
 # --- Home ---
 if choice == "Home":
-    st.title("🏠 Welcome to Sales Tracking Dashboard")
-    st.markdown("### Use the sidebar to navigate to Sales Tracking.")
+    st.title("🏠 Welcome to Haneef World ")
+    st.markdown("### Use the sidebar to navigate to Full Sales Report.")
 
 # --- Sales Tracking ---
 elif choice == "Sales Tracking":
@@ -191,4 +191,5 @@ elif choice == "Sales Tracking":
 
     else:
         st.info("Please upload your Excel file with sheets 'sales data' and 'Target'.")
+
 
