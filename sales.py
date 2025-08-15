@@ -47,16 +47,21 @@ def create_pptx(report_df, billing_df, py_df, figs_dict):
         slide = prs.slides.add_slide(prs.slide_layouts[5])
         slide.shapes.title.text = title
         img_stream = io.BytesIO()
-        fig.write_image(img_stream, format='png')
-        img_stream.seek(0)
-        slide.shapes.add_picture(img_stream, Inches(0.5), Inches(1.5), width=Inches(8))
+        try:
+            # Export Plotly figure to PNG
+            fig.write_image(img_stream, format='png')  # Requires kaleido
+            img_stream.seek(0)
+            slide.shapes.add_picture(img_stream, Inches(0.5), Inches(1.5), width=Inches(8))
+        except Exception:
+            slide.shapes.add_textbox(Inches(0.5), Inches(1.5), Inches(8), Inches(4)).text_frame.text = \
+                "Chart cannot be embedded. Install kaleido."
 
-    # Add tables
+    # --- Add tables ---
     add_table_slide(report_df.reset_index(), "Sales & Targets Summary")
     add_table_slide(billing_df.reset_index(), "Sales by Billing Type per Salesman")
     add_table_slide(py_df.reset_index(), "Sales by PY Name 1")
 
-    # Add charts
+    # --- Add charts ---
     for key, fig in figs_dict.items():
         add_chart_slide(fig, key)
 
@@ -156,7 +161,7 @@ elif choice == "Sales Tracking":
                 name="KA Sales",
                 orientation='h',
                 marker_color='skyblue',
-                text=total_sales.loc[all_salesmen],
+                text=[f"{v:,}" for v in total_sales.loc[all_salesmen]],
                 textposition='outside'
             ))
             fig_sales.add_trace(go.Bar(
@@ -165,7 +170,7 @@ elif choice == "Sales Tracking":
                 name="KA Gap",
                 orientation='h',
                 marker_color='lightgray',
-                text=ka_gap.loc[all_salesmen],
+                text=[f"{v:,}" for v in ka_gap.loc[all_salesmen]],
                 textposition='outside'
             ))
             fig_sales.add_trace(go.Bar(
@@ -174,7 +179,7 @@ elif choice == "Sales Tracking":
                 name="Talabat Sales",
                 orientation='h',
                 marker_color='orange',
-                text=talabat_sales.loc[all_salesmen],
+                text=[f"{v:,}" for v in talabat_sales.loc[all_salesmen]],
                 textposition='outside'
             ))
             fig_sales.add_trace(go.Bar(
@@ -183,7 +188,7 @@ elif choice == "Sales Tracking":
                 name="Talabat Gap",
                 orientation='h',
                 marker_color='lightgreen',
-                text=talabat_gap.loc[all_salesmen],
+                text=[f"{v:,}" for v in talabat_gap.loc[all_salesmen]],
                 textposition='outside'
             ))
             fig_sales.update_layout(
@@ -198,7 +203,6 @@ elif choice == "Sales Tracking":
             fig_pie = px.pie(
                 names=["KA Sales","KA Gap","Talabat Sales","Talabat Gap"],
                 values=[total_sales.sum(), ka_gap.sum(), talabat_sales.sum(), talabat_gap.sum()],
-                color=["KA Sales","KA Gap","Talabat Sales","Talabat Gap"],
                 color_discrete_map={"KA Sales":"skyblue","KA Gap":"lightgray","Talabat Sales":"orange","Talabat Gap":"lightgreen"},
                 title="KA & Talabat Combined Target vs Sales"
             )
@@ -227,18 +231,17 @@ elif choice == "Sales Tracking":
 
             # --- Downloads ---
             st.subheader("Download Reports")
-            if st.button("Download PPTX"):
-                pptx_data = create_pptx(report_df, billing_df, py_df, figs)
-                st.download_button("Download PPTX", data=pptx_data, file_name="sales_report.pptx",
-                                   mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
-            if st.button("Download Excel"):
-                excel_stream = io.BytesIO()
-                with pd.ExcelWriter(excel_stream, engine='xlsxwriter') as writer:
-                    report_df.to_excel(writer, sheet_name="Sales Summary")
-                    billing_df.to_excel(writer, sheet_name="Billing Type")
-                    py_df.to_frame().to_excel(writer, sheet_name="PY Name 1")
-                excel_stream.seek(0)
-                st.download_button("Download Excel", data=excel_stream, file_name="sales_report.xlsx",
-                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            pptx_data = create_pptx(report_df, billing_df, py_df, figs)
+            st.download_button("Download PPTX", data=pptx_data, file_name="sales_report.pptx",
+                               mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+
+            excel_stream = io.BytesIO()
+            with pd.ExcelWriter(excel_stream, engine='xlsxwriter') as writer:
+                report_df.to_excel(writer, sheet_name="Sales Summary")
+                billing_df.to_excel(writer, sheet_name="Billing Type")
+                py_df.to_frame().to_excel(writer, sheet_name="PY Name 1")
+            excel_stream.seek(0)
+            st.download_button("Download Excel", data=excel_stream, file_name="sales_report.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         else:
             st.info("Please upload your Excel file with sheets 'sales data' and 'Target'.")
