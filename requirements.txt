@@ -6,3 +6,5 @@ python-pptx
 xlsxwriter
 openpyxl
 kaleido
+matplotlib
+
