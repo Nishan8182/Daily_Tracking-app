@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from pptx import Presentation
 from pptx.util import Inches
 import io
-from datetime import datetime, timedelta
+from datetime import datetime
 from sklearn.linear_model import LinearRegression
 
 # --- Page Config ---
@@ -98,13 +98,15 @@ elif choice == "Sales Tracking":
             py_filter = st.sidebar.multiselect("Select PY Name", options=sales_df['PY Name 1'].unique(), default=sales_df['PY Name 1'].unique())
             sp_filter = st.sidebar.multiselect("Select SP Name1", options=sales_df['SP Name1'].unique(), default=sales_df['SP Name1'].unique())
 
-            # Quick Date Presets
+            # --- Quick Date Presets ---
             preset = st.sidebar.radio("Quick Date Presets", ["Custom Range", "Last 7 Days", "This Month", "YTD"])
             today = pd.Timestamp.today()
             if preset == "Last 7 Days":
                 date_range = [today - pd.Timedelta(days=7), today]
             elif preset == "This Month":
-                date_range = [today.replace(day=1), today]
+                month_start = today.replace(day=1)
+                month_end = (month_start + pd.offsets.MonthEnd(0))
+                date_range = [month_start, month_end]
             elif preset == "YTD":
                 date_range = [today.replace(month=1, day=1), today]
             else:
@@ -122,12 +124,27 @@ elif choice == "Sales Tracking":
                 (sales_df['SP Name1'].isin(sp_filter))
             ]
 
+            # --- Days Finish & Per Day KA Target ---
+            billing_start = df_filtered['Billing Date'].min()
+            billing_end = df_filtered['Billing Date'].max()
+            all_days = pd.date_range(billing_start, billing_end)
+            days_finish = sum(1 for d in all_days if d.weekday() != 4)  # Exclude Fridays
+            total_ka_target = target_df['KA Target'].sum()
+
+            # Per Day KA Target based on current month (excluding Fridays)
+            current_month_start = today.replace(day=1)
+            current_month_end = (current_month_start + pd.offsets.MonthEnd(0))
+            current_month_days = pd.date_range(current_month_start, current_month_end)
+            working_days_current_month = sum(1 for d in current_month_days if d.weekday() != 4)
+            per_day_ka_target = total_ka_target / working_days_current_month if working_days_current_month > 0 else 0
+
             # --- Calculations ---
             total_sales = df_filtered.groupby("Driver Name EN")["Net Value"].sum()
             talabat_df = df_filtered[df_filtered["PY Name 1"] == "STORES SERVICES KUWAIT CO."]
             talabat_sales = talabat_df.groupby("Driver Name EN")["Net Value"].sum()
             ka_targets = target_df.set_index("Driver Name EN")["KA Target"]
             talabat_targets = target_df.set_index("Driver Name EN")["Talabat Target"]
+
             all_salesmen = total_sales.index.union(talabat_sales.index).union(ka_targets.index).union(talabat_targets.index)
             total_sales = total_sales.reindex(all_salesmen, fill_value=0).astype(int)
             talabat_sales = talabat_sales.reindex(all_salesmen, fill_value=0).astype(int)
@@ -135,6 +152,7 @@ elif choice == "Sales Tracking":
             talabat_targets = talabat_targets.reindex(all_salesmen, fill_value=0).astype(int)
             ka_gap = (ka_targets - total_sales).clip(lower=0).astype(int)
             talabat_gap = (talabat_targets - talabat_sales).clip(lower=0).astype(int)
+
             top_salesmen = total_sales.sort_values(ascending=False).head(top_n).index
             total_sales = total_sales.loc[top_salesmen]
             talabat_sales = talabat_sales.loc[top_salesmen]
@@ -147,17 +165,25 @@ elif choice == "Sales Tracking":
             # --- KPIs ---
             with tabs[0]:
                 st.subheader("🏆 Key Metrics")
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Total KA Sales", f"{total_sales.sum():,}", f"{((total_sales.sum()/ka_targets.sum())*100):.2f}%")
-                col2.metric("Total Talabat Sales", f"{talabat_sales.sum():,}", f"{((talabat_sales.sum()/talabat_targets.sum())*100):.2f}%")
-                col3.metric("Total KA Gap", f"{ka_gap.sum():,}", f"{(ka_gap.sum()/ka_targets.sum()*100):.2f}%")
-                col4.metric("Total Talabat Gap", f"{talabat_gap.sum():,}", f"{(talabat_gap.sum()/talabat_targets.sum()*100):.2f}%")
-                col5, col6 = st.columns(2)
-                col5.metric("Top KA Salesman", total_sales.idxmax(), f"{total_sales.max():,}")
-                col6.metric("Top Talabat Salesman", talabat_sales.idxmax(), f"{talabat_sales.max():,}")
+                r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+                r1c1.metric("Total KA Sales", f"{total_sales.sum():,}", f"{((total_sales.sum()/ka_targets.sum())*100):.2f}%")
+                r1c2.metric("Total Talabat Sales", f"{talabat_sales.sum():,}", f"{((talabat_sales.sum()/talabat_targets.sum())*100):.2f}%")
+                r1c3.metric("Total KA Gap", f"{ka_gap.sum():,}", f"{(ka_gap.sum()/ka_targets.sum()*100):.2f}%")
+                r1c4.metric("Total Talabat Gap", f"{talabat_gap.sum():,}", f"{(talabat_gap.sum()/talabat_targets.sum()*100):.2f}%")
+                r2c1, r2c2 = st.columns(2)
+                r2c1.metric("Top KA Salesman", total_sales.idxmax(), f"{total_sales.max():,}")
+                r2c2.metric("Top Talabat Salesman", talabat_sales.idxmax(), f"{talabat_sales.max():,}")
+                r3c1, r3c2, r3c3, r3c4 = st.columns(4)
+                r3c1.metric("Day's Finish", days_finish)
+                r3c2.metric("Per Day KA Target", f"{per_day_ka_target:,.0f}")
+                current_sales_per_day = total_sales.sum() / days_finish if days_finish > 0 else 0
+                remaining_per_day_target = per_day_ka_target - current_sales_per_day
+                r3c3.metric("Current Sales Per Day", f"{current_sales_per_day:,.0f}")
+                r3c4.metric("Remaining KA per Day", f"{remaining_per_day_target:,.0f}")
 
             # --- Summary Tables ---
             with tabs[1]:
+                st.subheader("Sales & Targets Summary")
                 report_df = pd.DataFrame({
                     "KA Target": ka_targets.loc[top_salesmen],
                     "KA Sales": total_sales,
@@ -168,21 +194,16 @@ elif choice == "Sales Tracking":
                     "Talabat Remaining": talabat_gap,
                     "Talabat % Achieved": ((talabat_sales / talabat_targets.loc[top_salesmen])*100).round(2)
                 })
-                st.subheader("Sales & Targets Summary")
-                st.dataframe(
-                    report_df.style.background_gradient(subset=["KA % Achieved","Talabat % Achieved"], cmap="Greens")
-                             .highlight_max(subset=["KA % Achieved","Talabat % Achieved"], color="gold")
-                             .format("{:,.0f}"), use_container_width=True
-                )
+                st.dataframe(report_df.style.background_gradient(subset=["KA % Achieved","Talabat % Achieved"], cmap="Greens")
+                                             .highlight_max(subset=["KA % Achieved","Talabat % Achieved"], color="gold")
+                                             .format("{:,.0f}"), use_container_width=True)
 
                 billing_df = df_filtered.groupby(["Driver Name EN","Billing Type"])["Net Value"].sum().unstack(fill_value=0)
                 billing_df["Total"] = billing_df.sum(axis=1)
-
                 required_cols = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
                 for col in required_cols:
                     if col not in billing_df.columns:
                         billing_df[col] = 0
-
                 billing_df["Return"] = billing_df["YKRE"] + billing_df["ZRE"]
                 billing_df["Return %"] = (billing_df["Return"] / billing_df["Total"] * 100).round(2)
                 billing_df.rename(columns={"YKF2":"HHT", "ZFR":"PRESALES"}, inplace=True)
@@ -190,39 +211,20 @@ elif choice == "Sales Tracking":
 
                 total_row = pd.DataFrame([{
                     "Total": billing_df["Total"].sum(),
-                    "PRESALES": 0,
-                    "HHT": 0,
-                    "YKRE": 0,
-                    "YKS1": 0,
-                    "YKS2": 0,
-                    "ZCAN": 0,
-                    "ZRE": 0,
+                    "PRESALES": 0, "HHT": 0, "YKRE": 0, "YKS1": 0, "YKS2": 0, "ZCAN": 0, "ZRE": 0,
                     "Return": billing_df["Return"].sum(),
                     "Return %": (billing_df["Return"].sum() / billing_df["Total"].sum() * 100).round(2)
                 }], index=["Total"])
                 billing_df = pd.concat([billing_df, total_row])
-
                 def highlight_total_row(row):
                     return ['background-color: #add8e6; color: #00008B; font-weight: bold' if row.name == "Total" else '' for _ in row]
-
                 st.subheader("Sales by Billing Type per Salesman")
-                st.dataframe(
-                    billing_df.style.background_gradient(cmap="Blues", subset=billing_df.columns[:-2])
+                st.dataframe(billing_df.style.background_gradient(cmap="Blues", subset=billing_df.columns[:-2])
                               .format({
-                                  "Total": "{:,.0f}",
-                                  "PRESALES": "{:,.0f}",
-                                  "HHT": "{:,.0f}",
-                                  "YKRE": "{:,.0f}",
-                                  "YKS1": "{:,.0f}",
-                                  "YKS2": "{:,.0f}",
-                                  "ZCAN": "{:,.0f}",
-                                  "ZRE": "{:,.0f}",
-                                  "Return": "{:,.0f}",
-                                  "Return %": "{:.2f}%"
-                              })
-                              .apply(highlight_total_row, axis=1),
-                    use_container_width=True
-                )
+                                  "Total": "{:,.0f}","PRESALES": "{:,.0f}","HHT": "{:,.0f}",
+                                  "YKRE": "{:,.0f}","YKS1": "{:,.0f}","YKS2": "{:,.0f}",
+                                  "ZCAN": "{:,.0f}","ZRE": "{:,.0f}","Return": "{:,.0f}","Return %": "{:.2f}%"
+                              }).apply(highlight_total_row, axis=1), use_container_width=True)
 
                 py_df = df_filtered.groupby("PY Name 1")["Net Value"].sum().sort_values(ascending=False)
                 st.subheader("Sales by PY Name 1")
@@ -230,6 +232,7 @@ elif choice == "Sales Tracking":
 
             # --- Charts ---
             with tabs[2]:
+                st.subheader("Sales Charts")
                 figs = {}
                 fig_sales = go.Figure()
                 fig_sales.add_trace(go.Bar(y=total_sales.index, x=total_sales, name="KA Sales", orientation='h',
@@ -251,18 +254,6 @@ elif choice == "Sales Tracking":
                 figs["Combined Pie Chart"] = fig_pie
                 st.plotly_chart(fig_pie, use_container_width=True)
 
-                daily_df = df_filtered.groupby(["Billing Date", "Driver Name EN"])["Net Value"].sum().reset_index()
-                fig_daily = go.Figure()
-                for s in total_sales.index:
-                    sub = daily_df[daily_df["Driver Name EN"]==s]
-                    if not sub.empty:
-                        fig_daily.add_trace(go.Scatter(x=sub["Billing Date"], y=sub["Net Value"], mode='lines+markers', name=s))
-                        sub["7d_avg"] = sub["Net Value"].rolling(7, 1).mean()
-                        fig_daily.add_trace(go.Scatter(x=sub["Billing Date"], y=sub["7d_avg"], mode='lines', line=dict(dash='dot'), name=f"{s} 7-Day Avg"))
-                fig_daily.update_layout(title="Daily Sales Trend - Top Salesmen")
-                figs["Daily Sales Trend"] = fig_daily
-                st.plotly_chart(fig_daily, use_container_width=True)
-
             # --- Download Reports ---
             with tabs[3]:
                 st.subheader("Download Reports")
@@ -281,7 +272,6 @@ elif choice == "Sales Tracking":
             # --- Advanced Insights ---
             with tabs[4]:
                 st.subheader("🚀 Advanced Insights & Analytics")
-                
                 st.markdown("**KA Gap Progress**")
                 for s in total_sales.index:
                     st.progress(int((total_sales[s]/ka_targets[s])*100))
@@ -293,11 +283,12 @@ elif choice == "Sales Tracking":
 
                 st.markdown("**Top 3 Performers per Week**")
                 weekly_df = df_filtered.groupby([pd.Grouper(key="Billing Date", freq="W"), "Driver Name EN"])["Net Value"].sum().reset_index()
-                top_weekly = weekly_df.groupby("Billing Date").apply(lambda x: x.nlargest(3, "Net Value"))
+                top_weekly = weekly_df.groupby("Billing Date").apply(lambda x: x.nlargest(3, "Net Value")).reset_index(drop=True)
                 st.dataframe(top_weekly)
 
                 st.markdown("**Forecast Next Month's KA & Talabat Sales**")
                 forecast_data = []
+                daily_df = df_filtered.groupby(["Billing Date", "Driver Name EN"])["Net Value"].sum().reset_index()
                 for s in total_sales.index:
                     sub = daily_df[daily_df["Driver Name EN"]==s]
                     if len(sub) >= 2:
