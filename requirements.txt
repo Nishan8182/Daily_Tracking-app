@@ -8,5 +8,6 @@ openpyxl
 kaleido
 matplotlib
 scikit-learn
+kaleido
 
 
