@@ -91,20 +91,12 @@ elif choice == "Sales Tracking":
         sales_df, target_df = load_data(uploaded_file)
         if sales_df is not None and target_df is not None:
 
-            # --- Enhanced Filters ---
+            # --- Filters ---
             st.sidebar.subheader("Filters")
-            salesmen = st.sidebar.multiselect(
-                "Select Salesmen", options=sales_df['Driver Name EN'].unique(), default=sales_df['Driver Name EN'].unique()
-            )
-            billing_types = st.sidebar.multiselect(
-                "Select Billing Types", options=sales_df['Billing Type'].unique(), default=sales_df['Billing Type'].unique()
-            )
-            py_filter = st.sidebar.multiselect(
-                "Select PY Name", options=sales_df['PY Name 1'].unique(), default=sales_df['PY Name 1'].unique()
-            )
-            sp_filter = st.sidebar.multiselect(
-                "Select SP Name1", options=sales_df['SP Name1'].unique(), default=sales_df['SP Name1'].unique()
-            )
+            salesmen = st.sidebar.multiselect("Select Salesmen", options=sales_df['Driver Name EN'].unique(), default=sales_df['Driver Name EN'].unique())
+            billing_types = st.sidebar.multiselect("Select Billing Types", options=sales_df['Billing Type'].unique(), default=sales_df['Billing Type'].unique())
+            py_filter = st.sidebar.multiselect("Select PY Name", options=sales_df['PY Name 1'].unique(), default=sales_df['PY Name 1'].unique())
+            sp_filter = st.sidebar.multiselect("Select SP Name1", options=sales_df['SP Name1'].unique(), default=sales_df['SP Name1'].unique())
 
             # Quick Date Presets
             preset = st.sidebar.radio("Quick Date Presets", ["Custom Range", "Last 7 Days", "This Month", "YTD"])
@@ -182,10 +174,56 @@ elif choice == "Sales Tracking":
                              .highlight_max(subset=["KA % Achieved","Talabat % Achieved"], color="gold")
                              .format("{:,.0f}"), use_container_width=True
                 )
+
                 billing_df = df_filtered.groupby(["Driver Name EN","Billing Type"])["Net Value"].sum().unstack(fill_value=0)
                 billing_df["Total"] = billing_df.sum(axis=1)
+
+                required_cols = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
+                for col in required_cols:
+                    if col not in billing_df.columns:
+                        billing_df[col] = 0
+
+                billing_df["Return"] = billing_df["YKRE"] + billing_df["ZRE"]
+                billing_df["Return %"] = (billing_df["Return"] / billing_df["Total"] * 100).round(2)
+                billing_df.rename(columns={"YKF2":"HHT", "ZFR":"PRESALES"}, inplace=True)
+                billing_df = billing_df[["Total", "PRESALES", "HHT", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE", "Return", "Return %"]]
+
+                total_row = pd.DataFrame([{
+                    "Total": billing_df["Total"].sum(),
+                    "PRESALES": 0,
+                    "HHT": 0,
+                    "YKRE": 0,
+                    "YKS1": 0,
+                    "YKS2": 0,
+                    "ZCAN": 0,
+                    "ZRE": 0,
+                    "Return": billing_df["Return"].sum(),
+                    "Return %": (billing_df["Return"].sum() / billing_df["Total"].sum() * 100).round(2)
+                }], index=["Total"])
+                billing_df = pd.concat([billing_df, total_row])
+
+                def highlight_total_row(row):
+                    return ['background-color: #add8e6; color: #00008B; font-weight: bold' if row.name == "Total" else '' for _ in row]
+
                 st.subheader("Sales by Billing Type per Salesman")
-                st.dataframe(billing_df.style.background_gradient(cmap="Blues").format("{:,.0f}"), use_container_width=True)
+                st.dataframe(
+                    billing_df.style.background_gradient(cmap="Blues", subset=billing_df.columns[:-2])
+                              .format({
+                                  "Total": "{:,.0f}",
+                                  "PRESALES": "{:,.0f}",
+                                  "HHT": "{:,.0f}",
+                                  "YKRE": "{:,.0f}",
+                                  "YKS1": "{:,.0f}",
+                                  "YKS2": "{:,.0f}",
+                                  "ZCAN": "{:,.0f}",
+                                  "ZRE": "{:,.0f}",
+                                  "Return": "{:,.0f}",
+                                  "Return %": "{:.2f}%"
+                              })
+                              .apply(highlight_total_row, axis=1),
+                    use_container_width=True
+                )
+
                 py_df = df_filtered.groupby("PY Name 1")["Net Value"].sum().sort_values(ascending=False)
                 st.subheader("Sales by PY Name 1")
                 st.dataframe(py_df.to_frame().style.background_gradient(cmap="Greens").format("{:,.0f}"), use_container_width=True)
@@ -194,10 +232,14 @@ elif choice == "Sales Tracking":
             with tabs[2]:
                 figs = {}
                 fig_sales = go.Figure()
-                fig_sales.add_trace(go.Bar(y=total_sales.index, x=total_sales, name="KA Sales", orientation='h', marker_color='skyblue', text=[f"{v:,}" for v in total_sales], textposition='outside'))
-                fig_sales.add_trace(go.Bar(y=total_sales.index, x=ka_gap, name="KA Gap", orientation='h', marker_color='lightgray', text=[f"{v:,}" for v in ka_gap], textposition='outside'))
-                fig_sales.add_trace(go.Bar(y=talabat_sales.index, x=talabat_sales, name="Talabat Sales", orientation='h', marker_color='orange', text=[f"{v:,}" for v in talabat_sales], textposition='outside'))
-                fig_sales.add_trace(go.Bar(y=talabat_sales.index, x=talabat_gap, name="Talabat Gap", orientation='h', marker_color='lightgreen', text=[f"{v:,}" for v in talabat_gap], textposition='outside'))
+                fig_sales.add_trace(go.Bar(y=total_sales.index, x=total_sales, name="KA Sales", orientation='h',
+                                           marker_color='skyblue', text=[f"{v:,}" for v in total_sales], textposition='outside'))
+                fig_sales.add_trace(go.Bar(y=total_sales.index, x=ka_gap, name="KA Gap", orientation='h',
+                                           marker_color='lightgray', text=[f"{v:,}" for v in ka_gap], textposition='outside'))
+                fig_sales.add_trace(go.Bar(y=talabat_sales.index, x=talabat_sales, name="Talabat Sales", orientation='h',
+                                           marker_color='orange', text=[f"{v:,}" for v in talabat_sales], textposition='outside'))
+                fig_sales.add_trace(go.Bar(y=talabat_sales.index, x=talabat_gap, name="Talabat Gap", orientation='h',
+                                           marker_color='lightgreen', text=[f"{v:,}" for v in talabat_gap], textposition='outside'))
                 fig_sales.update_layout(barmode='stack', title="Sales & Targets by Salesman", yaxis=dict(autorange="reversed"), xaxis_title="Value")
                 figs["Sales & Targets by Salesman"] = fig_sales
                 st.plotly_chart(fig_sales, use_container_width=True)
@@ -240,7 +282,6 @@ elif choice == "Sales Tracking":
             with tabs[4]:
                 st.subheader("🚀 Advanced Insights & Analytics")
                 
-                # Gap Progress Bars
                 st.markdown("**KA Gap Progress**")
                 for s in total_sales.index:
                     st.progress(int((total_sales[s]/ka_targets[s])*100))
@@ -250,13 +291,11 @@ elif choice == "Sales Tracking":
                     st.progress(int((talabat_sales[s]/talabat_targets[s])*100))
                     st.write(f"{s}: {talabat_sales[s]:,}/{talabat_targets[s]:,}")
 
-                # Top 3 Performers per Week
                 st.markdown("**Top 3 Performers per Week**")
                 weekly_df = df_filtered.groupby([pd.Grouper(key="Billing Date", freq="W"), "Driver Name EN"])["Net Value"].sum().reset_index()
                 top_weekly = weekly_df.groupby("Billing Date").apply(lambda x: x.nlargest(3, "Net Value"))
                 st.dataframe(top_weekly)
 
-                # Forecast KA & Talabat Sales Together
                 st.markdown("**Forecast Next Month's KA & Talabat Sales**")
                 forecast_data = []
                 for s in total_sales.index:
@@ -271,13 +310,13 @@ elif choice == "Sales Tracking":
                 forecast_df = pd.DataFrame(forecast_data)
                 st.dataframe(forecast_df)
 
-                # Forecast Plot
                 fig_forecast = go.Figure()
                 for s in total_sales.index:
                     sub = daily_df[daily_df["Driver Name EN"]==s]
                     if not sub.empty:
                         fig_forecast.add_trace(go.Scatter(x=sub["Billing Date"], y=sub["Net Value"], mode='lines+markers', name=f"{s} Actual"))
-                        fig_forecast.add_trace(go.Scatter(x=[sub["Billing Date"].max()+pd.Timedelta(days=30)], y=[forecast_df.loc[forecast_df["Driver Name EN"]==s, "Forecast"].values[0]], 
+                        fig_forecast.add_trace(go.Scatter(x=[sub["Billing Date"].max()+pd.Timedelta(days=30)],
+                                                          y=[forecast_df.loc[forecast_df["Driver Name EN"]==s, "Forecast"].values[0]], 
                                                           mode='markers', marker=dict(symbol='diamond', size=12), name=f"{s} Forecast"))
                 fig_forecast.update_layout(title="KA & Talabat Sales Forecast Next Month", xaxis_title="Date", yaxis_title="Sales")
                 st.plotly_chart(fig_forecast, use_container_width=True)
