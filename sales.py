@@ -78,7 +78,7 @@ def color_positive_negative(val):
 
 # --- Sidebar Menu ---
 st.sidebar.title("Menu")
-menu = ["Home", "Sales Tracking", "YTD"]
+menu = ["Home", "Sales Tracking", "YTD", "Custom Analysis"]  # <— NEW PAGE ADDED
 choice = st.sidebar.selectbox("Navigate", menu)
 
 # --- Home Page ---
@@ -90,7 +90,8 @@ if choice == "Home":
         - Interactive charts for trends & gaps
         - Download reports in PPTX & Excel
         - Compare sales across two custom periods
-        Use the sidebar to navigate to Sales Tracking or YTD.
+        - NEW: Custom Analysis (pick any column(s) to compare)
+        Use the sidebar to navigate to Sales Tracking, YTD, or Custom Analysis.
     """)
 
 # --- Sales Tracking Page ---
@@ -366,3 +367,139 @@ elif choice == "YTD":
                 yaxis2=dict(title="% Difference", overlaying='y', side='right', showgrid=False)
             )
             st.plotly_chart(fig, use_container_width=True)
+
+# --- Custom Analysis (NEW PAGE) ---
+elif choice == "Custom Analysis":
+    st.title("🔍 Custom Analysis (Pick Any Columns)")
+
+    uploaded_file = st.file_uploader("Upload Excel for Custom Analysis", type=["xlsx"], key="custom_upload")
+
+    if uploaded_file:
+        sales_df, _ = load_data(uploaded_file)
+        if sales_df is not None:
+            # Show available columns
+            with st.expander("👀 Show available columns in your data"):
+                col_info = pd.DataFrame({
+                    "Column": sales_df.columns,
+                    "Dtype": [str(sales_df[c].dtype) for c in sales_df.columns]
+                })
+                st.dataframe(col_info, use_container_width=True)
+
+            # Derived time columns (added without touching original data)
+            if "Billing Date" in sales_df.columns:
+                sales_df["Billing Month"] = sales_df["Billing Date"].dt.to_period("M").astype(str)
+                sales_df["Billing Year"] = sales_df["Billing Date"].dt.year.astype(str)
+
+            # Dimension pickers
+            st.subheader("1) Choose columns to group/compare")
+            # Treat object/category/bool as categorical; also include derived month/year
+            categorical_cols = [c for c in sales_df.columns if (sales_df[c].dtype == 'object' or str(sales_df[c].dtype) == 'category' or sales_df[c].dtype == 'bool')]
+            for c in ["Billing Month", "Billing Year"]:
+                if c in sales_df.columns and c not in categorical_cols:
+                    categorical_cols.append(c)
+            # Remove the measure column if it's object accidentally
+            if "Net Value" in categorical_cols:
+                categorical_cols.remove("Net Value")
+
+            dims = st.multiselect("Group by (1–3 columns)", options=categorical_cols, default=["Driver Name EN"] if "Driver Name EN" in categorical_cols else categorical_cols[:1], max_selections=3)
+            if len(dims) == 0:
+                st.warning("Please select at least one column to group by.")
+            else:
+                # Optional filters similar to Sales Tracking (do not change original pages)
+                st.subheader("2) Optional filters")
+                filt_cols = ["Driver Name EN", "Billing Type", "PY Name 1", "SP Name1"]
+                filter_widgets = {}
+                fl_cols = st.columns(len(filt_cols))
+                for i, colname in enumerate(filt_cols):
+                    if colname in sales_df.columns:
+                        options = sorted(sales_df[colname].dropna().unique().tolist())
+                        default_vals = options
+                        filter_widgets[colname] = fl_cols[i].multiselect(f"Filter: {colname}", options=options, default=default_vals)
+
+                # Date ranges (two periods)
+                st.subheader("3) Select two periods to compare")
+                left, right = st.columns(2)
+                min_d, max_d = sales_df["Billing Date"].min(), sales_df["Billing Date"].max()
+                with left:
+                    period1 = st.date_input("Period 1", [min_d, max_d], key="custom_p1")
+                with right:
+                    period2 = st.date_input("Period 2", [min_d, max_d], key="custom_p2")
+
+                p1_label = f"{period1[0].strftime('%d-%b-%Y')} to {period1[1].strftime('%d-%b-%Y')}"
+                p2_label = f"{period2[0].strftime('%d-%b-%Y')} to {period2[1].strftime('%d-%b-%Y')}"
+
+                # Apply filters
+                df = sales_df.copy()
+                for colname, selected in filter_widgets.items():
+                    if colname in df.columns and len(selected) != len(df[colname].dropna().unique()):
+                        df = df[df[colname].isin(selected)]
+
+                df_p1 = df[(df["Billing Date"] >= pd.to_datetime(period1[0])) & (df["Billing Date"] <= pd.to_datetime(period1[1]))]
+                df_p2 = df[(df["Billing Date"] >= pd.to_datetime(period2[0])) & (df["Billing Date"] <= pd.to_datetime(period2[1]))]
+
+                # Aggregate by chosen dimensions
+                agg1 = df_p1.groupby(dims)["Net Value"].sum().rename(p1_label)
+                agg2 = df_p2.groupby(dims)["Net Value"].sum().rename(p2_label)
+
+                # Merge to full view
+                full_index = agg1.index.union(agg2.index)
+                agg1 = agg1.reindex(full_index, fill_value=0)
+                agg2 = agg2.reindex(full_index, fill_value=0)
+                comparison_dyn = pd.concat([agg1, agg2], axis=1)
+                comparison_dyn["Difference"] = comparison_dyn[p2_label] - comparison_dyn[p1_label]
+                comparison_dyn["Comparison %"] = np.where(comparison_dyn[p1_label] != 0,
+                                                          (comparison_dyn["Difference"] / comparison_dyn[p1_label] * 100).round(2),
+                                                          0)
+                comparison_dyn = comparison_dyn.sort_values(by=p2_label, ascending=False)
+
+                st.subheader("4) Result table")
+                st.dataframe(
+                    comparison_dyn.style.format({
+                        p1_label: "{:,.0f}",
+                        p2_label: "{:,.0f}",
+                        "Difference": "{:,.0f}",
+                        "Comparison %": "{:.2f}%"
+                    }).applymap(color_positive_negative, subset=["Difference","Comparison %"]),
+                    use_container_width=True
+                )
+
+                # Excel download
+                excel_stream_dyn = io.BytesIO()
+                with pd.ExcelWriter(excel_stream_dyn, engine='xlsxwriter') as writer:
+                    # Write as a regular sheet (multi-index preserved)
+                    comparison_dyn.to_excel(writer, sheet_name="Custom_Comparison")
+                    # Also write a flattened version for easier Excel consumption
+                    flat = comparison_dyn.reset_index()
+                    flat.to_excel(writer, sheet_name="Custom_Comparison_Flat", index=False)
+                excel_stream_dyn.seek(0)
+                st.download_button("Download Excel - Custom Comparison", data=excel_stream_dyn, file_name="Custom_Comparison.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+                # Chart
+                st.subheader("5) Visualization")
+                # For charting, create a flat df and choose a display dimension
+                flat_df = comparison_dyn.reset_index()
+                chart_dim = None
+                if len(dims) == 1:
+                    chart_dim = dims[0]
+                else:
+                    chart_dim = st.selectbox("Choose a dimension for the x-axis", dims)
+
+                # Build a readable x label if multiple dims
+                if len(dims) >= 2:
+                    # Combine dims into a single label for plotting
+                    flat_df["__label__"] = flat_df[dims].astype(str).agg(" | ".join, axis=1)
+                    xcol = "__label__"
+                else:
+                    xcol = chart_dim
+
+                fig = go.Figure()
+                fig.add_trace(go.Bar(x=flat_df[xcol], y=flat_df[p1_label], name=p1_label))
+                fig.add_trace(go.Bar(x=flat_df[xcol], y=flat_df[p2_label], name=p2_label))
+                fig.update_layout(barmode='group', xaxis_title=" x ".join(dims), yaxis_title="Net Value", title="Custom Comparison")
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Optional line for % difference (secondary y)
+                fig2 = go.Figure()
+                fig2.add_trace(go.Scatter(x=flat_df[xcol], y=flat_df["Comparison %"], mode='lines+markers', name="Comparison %"))
+                fig2.update_layout(xaxis_title=" x ".join(dims), yaxis_title="% Difference", title="Custom Comparison - % Difference")
+                st.plotly_chart(fig2, use_container_width=True)
