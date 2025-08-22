@@ -270,7 +270,7 @@ elif choice == "Sales Tracking":
                 else:
                     st.info("Not enough data to generate trend forecast.")
 
-# --- YTD Page ---
+# --- YTD Page (Updated) ---
 elif choice == "YTD":
     st.title("📅 Year-to-Date (YTD) Comparison")
     uploaded_file = st.file_uploader("Upload Excel for YTD Comparison", type=["xlsx"], key="ytd_upload")
@@ -279,6 +279,7 @@ elif choice == "YTD":
         sales_df, _ = load_data(uploaded_file)
         if sales_df is not None:
             dimension = st.selectbox("Compare By", ["Driver Name EN", "PY Name 1", "SP Name1"])
+            top_n = st.slider("Show Top N", min_value=1, max_value=20, value=10)
 
             st.subheader("Select Two Periods to Compare")
             col1, col2 = st.columns(2)
@@ -286,6 +287,10 @@ elif choice == "YTD":
                 period1 = st.date_input("Period 1 Start-End", [sales_df['Billing Date'].min(), sales_df['Billing Date'].max()])
             with col2:
                 period2 = st.date_input("Period 2 Start-End", [sales_df['Billing Date'].min(), sales_df['Billing Date'].max()])
+
+            # Convert to string for column names
+            period1_label = f"{period1[0].strftime('%d-%b-%Y')} to {period1[1].strftime('%d-%b-%Y')}"
+            period2_label = f"{period2[0].strftime('%d-%b-%Y')} to {period2[1].strftime('%d-%b-%Y')}"
 
             df1 = sales_df[(sales_df['Billing Date'] >= pd.to_datetime(period1[0])) & (sales_df['Billing Date'] <= pd.to_datetime(period1[1]))]
             df2 = sales_df[(sales_df['Billing Date'] >= pd.to_datetime(period2[0])) & (sales_df['Billing Date'] <= pd.to_datetime(period2[1]))]
@@ -297,36 +302,52 @@ elif choice == "YTD":
             agg2 = agg2.reindex(all_index, fill_value=0)
 
             comparison_df = pd.DataFrame({
-                "Period 1": agg1,
-                "Period 2": agg2
+                period1_label: agg1,
+                period2_label: agg2
             })
-            comparison_df["Difference"] = comparison_df["Period 2"] - comparison_df["Period 1"]
-            comparison_df["Comparison %"] = np.where(comparison_df["Period 1"] != 0,
-                                                     (comparison_df["Difference"] / comparison_df["Period 1"] * 100).round(2),
+            comparison_df["Difference"] = comparison_df[period2_label] - comparison_df[period1_label]
+            comparison_df["Comparison %"] = np.where(comparison_df[period1_label] != 0,
+                                                     (comparison_df["Difference"] / comparison_df[period1_label] * 100).round(2),
                                                      0)
-            comparison_df = comparison_df.sort_values(by="Difference", ascending=False)
+            comparison_df = comparison_df.sort_values(by=period2_label, ascending=False).head(top_n)
 
-            st.subheader(f"YTD Comparison by {dimension}")
+            # Highlight function
+            def highlight_date_columns(row):
+                return [
+                    'background-color: #d1e7dd; font-weight: bold' if col in [period1_label, period2_label] 
+                    else '' for col in row.index
+                ]
+
+            st.subheader(f"YTD Comparison by {dimension} (Top {top_n})")
             st.dataframe(
                 comparison_df.style.format({
-                    "Period 1": "{:,.0f}",
-                    "Period 2": "{:,.0f}",
+                    period1_label: "{:,.0f}",
+                    period2_label: "{:,.0f}",
                     "Difference": "{:,.0f}",
                     "Comparison %": "{:.2f}%"
-                }).applymap(color_positive_negative, subset=["Difference","Comparison %"]),
+                }).applymap(color_positive_negative, subset=["Difference","Comparison %"])
+                  .apply(highlight_date_columns, axis=1),
                 use_container_width=True
             )
 
             st.subheader("YTD Comparison Chart")
             fig = go.Figure()
-            fig.add_trace(go.Bar(x=comparison_df.index, y=comparison_df["Period 1"], name="Period 1", marker_color='skyblue'))
-            fig.add_trace(go.Bar(x=comparison_df.index, y=comparison_df["Period 2"], name="Period 2", marker_color='orange'))
-            fig.update_layout(barmode='group', title=f"YTD Comparison by {dimension}", xaxis_title=dimension, yaxis_title="Net Value")
+            fig.add_trace(go.Bar(x=comparison_df.index, y=comparison_df[period1_label], name=period1_label, marker_color='skyblue'))
+            fig.add_trace(go.Bar(x=comparison_df.index, y=comparison_df[period2_label], name=period2_label, marker_color='orange'))
+            fig.add_trace(go.Scatter(x=comparison_df.index, y=comparison_df["Comparison %"], name="% Difference", mode='lines+markers', yaxis='y2', line=dict(color='green', width=3)))
+            fig.update_layout(
+                barmode='group',
+                title=f"YTD Comparison by {dimension} (Top {top_n})",
+                xaxis_title=dimension,
+                yaxis=dict(title="Net Value"),
+                yaxis2=dict(title="% Difference", overlaying='y', side='right', showgrid=False)
+            )
             st.plotly_chart(fig, use_container_width=True)
 
+            # Excel download
             excel_stream = io.BytesIO()
             with pd.ExcelWriter(excel_stream, engine='xlsxwriter') as writer:
                 comparison_df.to_excel(writer, sheet_name="YTD Comparison")
             excel_stream.seek(0)
-            st.download_button("Download Excel", data=excel_stream, file_name=f"ytd_comparison_by_{dimension}.xlsx",
+            st.download_button("Download Excel", data=excel_stream, file_name=f"ytd_comparison_top_{top_n}_{dimension}.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
