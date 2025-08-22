@@ -66,9 +66,19 @@ def create_pptx(report_df, billing_df, py_df, figs_dict):
     pptx_stream.seek(0)
     return pptx_stream
 
+# --- Positive/Negative Coloring ---
+def color_positive_negative(val):
+    if val > 0:
+        color = 'green'
+    elif val < 0:
+        color = 'red'
+    else:
+        color = ''
+    return f'color: {color}; font-weight: bold'
+
 # --- Sidebar Menu ---
 st.sidebar.title("Menu")
-menu = ["Home", "Sales Tracking"]
+menu = ["Home", "Sales Tracking", "YTD"]
 choice = st.sidebar.selectbox("Navigate", menu)
 
 # --- Home Page ---
@@ -79,13 +89,14 @@ if choice == "Home":
         - View sales & targets by salesman, PY Name, and SP Name
         - Interactive charts for trends & gaps
         - Download reports in PPTX & Excel
-        Use the sidebar to navigate to Sales Tracking.
+        - Compare sales across two custom periods
+        Use the sidebar to navigate to Sales Tracking or YTD.
     """)
 
 # --- Sales Tracking Page ---
 elif choice == "Sales Tracking":
     st.title("📊 Sales Tracking Dashboard")
-    uploaded_file = st.file_uploader("Upload your Excel file", type=["xlsx"])
+    uploaded_file = st.file_uploader("Upload your Excel file", type=["xlsx"], key="sales_upload")
 
     if uploaded_file:
         sales_df, target_df = load_data(uploaded_file)
@@ -130,8 +141,6 @@ elif choice == "Sales Tracking":
             all_days = pd.date_range(billing_start, billing_end)
             days_finish = sum(1 for d in all_days if d.weekday() != 4)  # Exclude Fridays
             total_ka_target = target_df['KA Target'].sum()
-
-            # Per Day KA Target based on current month (excluding Fridays)
             current_month_start = today.replace(day=1)
             current_month_end = (current_month_start + pd.offsets.MonthEnd(0))
             current_month_days = pd.date_range(current_month_start, current_month_end)
@@ -194,7 +203,7 @@ elif choice == "Sales Tracking":
                     "Talabat Remaining": talabat_gap,
                     "Talabat % Achieved": ((talabat_sales / talabat_targets.loc[top_salesmen])*100).round(2)
                 })
-                st.dataframe(report_df.style.background_gradient(subset=["KA % Achieved","Talabat % Achieved"], cmap="Greens")
+                st.dataframe(report_df.style.applymap(color_positive_negative, subset=["KA % Achieved","Talabat % Achieved"])
                                              .highlight_max(subset=["KA % Achieved","Talabat % Achieved"], color="gold")
                                              .format("{:,.0f}"), use_container_width=True)
 
@@ -224,93 +233,100 @@ elif choice == "Sales Tracking":
                                   "Total": "{:,.0f}","PRESALES": "{:,.0f}","HHT": "{:,.0f}",
                                   "YKRE": "{:,.0f}","YKS1": "{:,.0f}","YKS2": "{:,.0f}",
                                   "ZCAN": "{:,.0f}","ZRE": "{:,.0f}","Return": "{:,.0f}","Return %": "{:.2f}%"
-                              }).apply(highlight_total_row, axis=1), use_container_width=True)
+                              }).apply(highlight_total_row, axis=1)
+                              .applymap(color_positive_negative, subset=["Return %"]), use_container_width=True)
 
                 py_df = df_filtered.groupby("PY Name 1")["Net Value"].sum().sort_values(ascending=False)
                 st.subheader("Sales by PY Name 1")
                 st.dataframe(py_df.to_frame().style.background_gradient(cmap="Greens").format("{:,.0f}"), use_container_width=True)
 
-            # --- Charts ---
+            # --- Charts Tab ---
             with tabs[2]:
                 st.subheader("Sales Charts")
-                figs = {}
-                fig_sales = go.Figure()
-                fig_sales.add_trace(go.Bar(y=total_sales.index, x=total_sales, name="KA Sales", orientation='h',
-                                           marker_color='skyblue', text=[f"{v:,}" for v in total_sales], textposition='outside'))
-                fig_sales.add_trace(go.Bar(y=total_sales.index, x=ka_gap, name="KA Gap", orientation='h',
-                                           marker_color='lightgray', text=[f"{v:,}" for v in ka_gap], textposition='outside'))
-                fig_sales.add_trace(go.Bar(y=talabat_sales.index, x=talabat_sales, name="Talabat Sales", orientation='h',
-                                           marker_color='orange', text=[f"{v:,}" for v in talabat_sales], textposition='outside'))
-                fig_sales.add_trace(go.Bar(y=talabat_sales.index, x=talabat_gap, name="Talabat Gap", orientation='h',
-                                           marker_color='lightgreen', text=[f"{v:,}" for v in talabat_gap], textposition='outside'))
-                fig_sales.update_layout(barmode='stack', title="Sales & Targets by Salesman", yaxis=dict(autorange="reversed"), xaxis_title="Value")
-                figs["Sales & Targets by Salesman"] = fig_sales
-                st.plotly_chart(fig_sales, use_container_width=True)
+                figs_dict = {}
+                fig_ka = px.bar(report_df, x=report_df.index, y="KA Sales", title="KA Sales by Salesman", text="KA Sales")
+                fig_talabat = px.bar(report_df, x=report_df.index, y="Talabat Sales", title="Talabat Sales by Salesman", text="Talabat Sales")
+                st.plotly_chart(fig_ka, use_container_width=True)
+                st.plotly_chart(fig_talabat, use_container_width=True)
+                figs_dict["KA Sales by Salesman"] = fig_ka
+                figs_dict["Talabat Sales by Salesman"] = fig_talabat
 
-                fig_pie = px.pie(names=["KA Sales","Talabat Sales"], values=[total_sales.sum(), talabat_sales.sum()],
-                                 color_discrete_map={"KA Sales":"skyblue","Talabat Sales":"orange"},
-                                 title=f"Total Sales: KA {total_sales.sum():,} | Talabat {talabat_sales.sum():,}")
-                fig_pie.update_traces(textinfo='percent+label+value', hovertemplate='%{label}: %{value:,} (%{percent})', textfont_size=14)
-                figs["Combined Pie Chart"] = fig_pie
-                st.plotly_chart(fig_pie, use_container_width=True)
-
-            # --- Download Reports ---
+            # --- Download Reports Tab ---
             with tabs[3]:
                 st.subheader("Download Reports")
-                pptx_data = create_pptx(report_df, billing_df, py_df, figs)
-                st.download_button("Download PPTX", data=pptx_data, file_name="sales_report.pptx",
-                                   mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
-                excel_stream = io.BytesIO()
-                with pd.ExcelWriter(excel_stream, engine='xlsxwriter') as writer:
-                    report_df.to_excel(writer, sheet_name="Sales Summary")
-                    billing_df.to_excel(writer, sheet_name="Billing Type")
-                    py_df.to_frame().to_excel(writer, sheet_name="PY Name 1")
-                excel_stream.seek(0)
-                st.download_button("Download Excel", data=excel_stream, file_name="sales_report.xlsx",
-                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                pptx_data = create_pptx(report_df, billing_df, py_df, figs_dict)
+                st.download_button("Download PPTX Report", data=pptx_data, file_name="sales_report.pptx")
 
-            # --- Advanced Insights ---
+            # --- Advanced Insights Tab ---
             with tabs[4]:
-                st.subheader("🚀 Advanced Insights & Analytics")
-                st.markdown("**KA Gap Progress**")
-                for s in total_sales.index:
-                    st.progress(int((total_sales[s]/ka_targets[s])*100))
-                    st.write(f"{s}: {total_sales[s]:,}/{ka_targets[s]:,}")
-                st.markdown("**Talabat Gap Progress**")
-                for s in talabat_sales.index:
-                    st.progress(int((talabat_sales[s]/talabat_targets[s])*100))
-                    st.write(f"{s}: {talabat_sales[s]:,}/{talabat_targets[s]:,}")
+                st.subheader("Sales Trend Forecast")
+                df_time = df_filtered.groupby("Billing Date")["Net Value"].sum().reset_index()
+                if len(df_time) > 1:
+                    model = LinearRegression()
+                    model.fit(np.arange(len(df_time)).reshape(-1,1), df_time["Net Value"])
+                    df_time["Forecast"] = model.predict(np.arange(len(df_time)).reshape(-1,1))
+                    fig_trend = px.line(df_time, x="Billing Date", y=["Net Value", "Forecast"], title="Sales Trend with Forecast")
+                    st.plotly_chart(fig_trend, use_container_width=True)
+                else:
+                    st.info("Not enough data to generate trend forecast.")
 
-                st.markdown("**Top 3 Performers per Week**")
-                weekly_df = df_filtered.groupby([pd.Grouper(key="Billing Date", freq="W"), "Driver Name EN"])["Net Value"].sum().reset_index()
-                top_weekly = weekly_df.groupby("Billing Date").apply(lambda x: x.nlargest(3, "Net Value")).reset_index(drop=True)
-                st.dataframe(top_weekly)
+# --- YTD Page ---
+elif choice == "YTD":
+    st.title("📅 Year-to-Date (YTD) Comparison")
+    uploaded_file = st.file_uploader("Upload Excel for YTD Comparison", type=["xlsx"], key="ytd_upload")
 
-                st.markdown("**Forecast Next Month's KA & Talabat Sales**")
-                forecast_data = []
-                daily_df = df_filtered.groupby(["Billing Date", "Driver Name EN"])["Net Value"].sum().reset_index()
-                for s in total_sales.index:
-                    sub = daily_df[daily_df["Driver Name EN"]==s]
-                    if len(sub) >= 2:
-                        lr = LinearRegression()
-                        X = np.arange(len(sub)).reshape(-1,1)
-                        y = sub["Net Value"].values
-                        lr.fit(X, y)
-                        pred = lr.predict(np.array([[len(sub)+30]]))[0]
-                        forecast_data.append({"Driver Name EN": s, "Forecast": int(pred)})
-                forecast_df = pd.DataFrame(forecast_data)
-                st.dataframe(forecast_df)
+    if uploaded_file:
+        sales_df, _ = load_data(uploaded_file)
+        if sales_df is not None:
+            dimension = st.selectbox("Compare By", ["Driver Name EN", "PY Name 1", "SP Name1"])
 
-                fig_forecast = go.Figure()
-                for s in total_sales.index:
-                    sub = daily_df[daily_df["Driver Name EN"]==s]
-                    if not sub.empty:
-                        fig_forecast.add_trace(go.Scatter(x=sub["Billing Date"], y=sub["Net Value"], mode='lines+markers', name=f"{s} Actual"))
-                        fig_forecast.add_trace(go.Scatter(x=[sub["Billing Date"].max()+pd.Timedelta(days=30)],
-                                                          y=[forecast_df.loc[forecast_df["Driver Name EN"]==s, "Forecast"].values[0]], 
-                                                          mode='markers', marker=dict(symbol='diamond', size=12), name=f"{s} Forecast"))
-                fig_forecast.update_layout(title="KA & Talabat Sales Forecast Next Month", xaxis_title="Date", yaxis_title="Sales")
-                st.plotly_chart(fig_forecast, use_container_width=True)
+            st.subheader("Select Two Periods to Compare")
+            col1, col2 = st.columns(2)
+            with col1:
+                period1 = st.date_input("Period 1 Start-End", [sales_df['Billing Date'].min(), sales_df['Billing Date'].max()])
+            with col2:
+                period2 = st.date_input("Period 2 Start-End", [sales_df['Billing Date'].min(), sales_df['Billing Date'].max()])
 
-        else:
-            st.info("Please upload an Excel file with sheets 'sales data' and 'Target'.")
+            df1 = sales_df[(sales_df['Billing Date'] >= pd.to_datetime(period1[0])) & (sales_df['Billing Date'] <= pd.to_datetime(period1[1]))]
+            df2 = sales_df[(sales_df['Billing Date'] >= pd.to_datetime(period2[0])) & (sales_df['Billing Date'] <= pd.to_datetime(period2[1]))]
+
+            agg1 = df1.groupby(dimension)["Net Value"].sum()
+            agg2 = df2.groupby(dimension)["Net Value"].sum()
+            all_index = agg1.index.union(agg2.index)
+            agg1 = agg1.reindex(all_index, fill_value=0)
+            agg2 = agg2.reindex(all_index, fill_value=0)
+
+            comparison_df = pd.DataFrame({
+                "Period 1": agg1,
+                "Period 2": agg2
+            })
+            comparison_df["Difference"] = comparison_df["Period 2"] - comparison_df["Period 1"]
+            comparison_df["Comparison %"] = np.where(comparison_df["Period 1"] != 0,
+                                                     (comparison_df["Difference"] / comparison_df["Period 1"] * 100).round(2),
+                                                     0)
+            comparison_df = comparison_df.sort_values(by="Difference", ascending=False)
+
+            st.subheader(f"YTD Comparison by {dimension}")
+            st.dataframe(
+                comparison_df.style.format({
+                    "Period 1": "{:,.0f}",
+                    "Period 2": "{:,.0f}",
+                    "Difference": "{:,.0f}",
+                    "Comparison %": "{:.2f}%"
+                }).applymap(color_positive_negative, subset=["Difference","Comparison %"]),
+                use_container_width=True
+            )
+
+            st.subheader("YTD Comparison Chart")
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=comparison_df.index, y=comparison_df["Period 1"], name="Period 1", marker_color='skyblue'))
+            fig.add_trace(go.Bar(x=comparison_df.index, y=comparison_df["Period 2"], name="Period 2", marker_color='orange'))
+            fig.update_layout(barmode='group', title=f"YTD Comparison by {dimension}", xaxis_title=dimension, yaxis_title="Net Value")
+            st.plotly_chart(fig, use_container_width=True)
+
+            excel_stream = io.BytesIO()
+            with pd.ExcelWriter(excel_stream, engine='xlsxwriter') as writer:
+                comparison_df.to_excel(writer, sheet_name="YTD Comparison")
+            excel_stream.seek(0)
+            st.download_button("Download Excel", data=excel_stream, file_name=f"ytd_comparison_by_{dimension}.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
