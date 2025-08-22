@@ -163,10 +163,10 @@ elif choice == "Sales Tracking":
             talabat_gap = (talabat_targets - talabat_sales).clip(lower=0).astype(int)
 
             top_salesmen = total_sales.sort_values(ascending=False).head(top_n).index
-            total_sales = total_sales.loc[top_salesmen]
-            talabat_sales = talabat_sales.loc[top_salesmen]
-            ka_gap = ka_gap.loc[top_salesmen]
-            talabat_gap = talabat_gap.loc[top_salesmen]
+            total_sales_top = total_sales.loc[top_salesmen]
+            talabat_sales_top = talabat_sales.loc[top_salesmen]
+            ka_gap_top = ka_gap.loc[top_salesmen]
+            talabat_gap_top = talabat_gap.loc[top_salesmen]
 
             # --- Tabs ---
             tabs = st.tabs(["KPIs", "Summary Tables", "Charts", "Download Reports", "Advanced Insights"])
@@ -180,8 +180,8 @@ elif choice == "Sales Tracking":
                 r1c3.metric("Total KA Gap", f"{ka_gap.sum():,}", f"{(ka_gap.sum()/ka_targets.sum()*100):.2f}%")
                 r1c4.metric("Total Talabat Gap", f"{talabat_gap.sum():,}", f"{(talabat_gap.sum()/talabat_targets.sum()*100):.2f}%")
                 r2c1, r2c2 = st.columns(2)
-                r2c1.metric("Top KA Salesman", total_sales.idxmax(), f"{total_sales.max():,}")
-                r2c2.metric("Top Talabat Salesman", talabat_sales.idxmax(), f"{talabat_sales.max():,}")
+                r2c1.metric("Top KA Salesman", total_sales_top.idxmax(), f"{total_sales_top.max():,}")
+                r2c2.metric("Top Talabat Salesman", talabat_sales_top.idxmax(), f"{talabat_sales_top.max():,}")
                 r3c1, r3c2, r3c3, r3c4 = st.columns(4)
                 r3c1.metric("Day's Finish", days_finish)
                 r3c2.metric("Per Day KA Target", f"{per_day_ka_target:,.0f}")
@@ -194,18 +194,25 @@ elif choice == "Sales Tracking":
             with tabs[1]:
                 st.subheader("Sales & Targets Summary")
                 report_df = pd.DataFrame({
-                    "KA Target": ka_targets.loc[top_salesmen],
+                    "KA Target": ka_targets,
                     "KA Sales": total_sales,
                     "KA Remaining": ka_gap,
-                    "KA % Achieved": ((total_sales / ka_targets.loc[top_salesmen])*100).round(2),
-                    "Talabat Target": talabat_targets.loc[top_salesmen],
+                    "KA % Achieved": ((total_sales / ka_targets)*100).round(2),
+                    "Talabat Target": talabat_targets,
                     "Talabat Sales": talabat_sales,
                     "Talabat Remaining": talabat_gap,
-                    "Talabat % Achieved": ((talabat_sales / talabat_targets.loc[top_salesmen])*100).round(2)
+                    "Talabat % Achieved": ((talabat_sales / talabat_targets)*100).round(2)
                 })
                 st.dataframe(report_df.style.applymap(color_positive_negative, subset=["KA % Achieved","Talabat % Achieved"])
                                              .highlight_max(subset=["KA % Achieved","Talabat % Achieved"], color="gold")
                                              .format("{:,.0f}"), use_container_width=True)
+
+                # Excel Download
+                excel_stream1 = io.BytesIO()
+                with pd.ExcelWriter(excel_stream1, engine='xlsxwriter') as writer:
+                    report_df.to_excel(writer, sheet_name="Sales_Targets_Summary")
+                excel_stream1.seek(0)
+                st.download_button("Download Excel - Sales & Targets Summary", data=excel_stream1, file_name="Sales_Targets_Summary.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
                 billing_df = df_filtered.groupby(["Driver Name EN","Billing Type"])["Net Value"].sum().unstack(fill_value=0)
                 billing_df["Total"] = billing_df.sum(axis=1)
@@ -235,10 +242,22 @@ elif choice == "Sales Tracking":
                                   "ZCAN": "{:,.0f}","ZRE": "{:,.0f}","Return": "{:,.0f}","Return %": "{:.2f}%"
                               }).apply(highlight_total_row, axis=1)
                               .applymap(color_positive_negative, subset=["Return %"]), use_container_width=True)
+                
+                excel_stream2 = io.BytesIO()
+                with pd.ExcelWriter(excel_stream2, engine='xlsxwriter') as writer:
+                    billing_df.to_excel(writer, sheet_name="Billing_Types")
+                excel_stream2.seek(0)
+                st.download_button("Download Excel - Billing Types", data=excel_stream2, file_name="Billing_Types.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
                 py_df = df_filtered.groupby("PY Name 1")["Net Value"].sum().sort_values(ascending=False)
                 st.subheader("Sales by PY Name 1")
                 st.dataframe(py_df.to_frame().style.background_gradient(cmap="Greens").format("{:,.0f}"), use_container_width=True)
+
+                excel_stream3 = io.BytesIO()
+                with pd.ExcelWriter(excel_stream3, engine='xlsxwriter') as writer:
+                    py_df.to_frame().to_excel(writer, sheet_name="Sales_by_PY_Name")
+                excel_stream3.seek(0)
+                st.download_button("Download Excel - Sales by PY Name", data=excel_stream3, file_name="Sales_by_PY_Name.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
             # --- Charts Tab ---
             with tabs[2]:
@@ -253,7 +272,7 @@ elif choice == "Sales Tracking":
 
             # --- Download Reports Tab ---
             with tabs[3]:
-                st.subheader("Download Reports")
+                st.subheader("Download PPTX Report")
                 pptx_data = create_pptx(report_df, billing_df, py_df, figs_dict)
                 st.download_button("Download PPTX Report", data=pptx_data, file_name="sales_report.pptx")
 
@@ -270,7 +289,7 @@ elif choice == "Sales Tracking":
                 else:
                     st.info("Not enough data to generate trend forecast.")
 
-# --- YTD Page (Updated) ---
+# --- YTD Page ---
 elif choice == "YTD":
     st.title("📅 Year-to-Date (YTD) Comparison")
     uploaded_file = st.file_uploader("Upload Excel for YTD Comparison", type=["xlsx"], key="ytd_upload")
@@ -279,7 +298,6 @@ elif choice == "YTD":
         sales_df, _ = load_data(uploaded_file)
         if sales_df is not None:
             dimension = st.selectbox("Compare By", ["Driver Name EN", "PY Name 1", "SP Name1"])
-            top_n = st.slider("Show Top N", min_value=1, max_value=20, value=10)
 
             st.subheader("Select Two Periods to Compare")
             col1, col2 = st.columns(2)
@@ -288,7 +306,6 @@ elif choice == "YTD":
             with col2:
                 period2 = st.date_input("Period 2 Start-End", [sales_df['Billing Date'].min(), sales_df['Billing Date'].max()])
 
-            # Convert to string for column names
             period1_label = f"{period1[0].strftime('%d-%b-%Y')} to {period1[1].strftime('%d-%b-%Y')}"
             period2_label = f"{period2[0].strftime('%d-%b-%Y')} to {period2[1].strftime('%d-%b-%Y')}"
 
@@ -309,16 +326,15 @@ elif choice == "YTD":
             comparison_df["Comparison %"] = np.where(comparison_df[period1_label] != 0,
                                                      (comparison_df["Difference"] / comparison_df[period1_label] * 100).round(2),
                                                      0)
-            comparison_df = comparison_df.sort_values(by=period2_label, ascending=False).head(top_n)
+            comparison_df = comparison_df.sort_values(by=period2_label, ascending=False)
 
-            # Highlight function
             def highlight_date_columns(row):
                 return [
                     'background-color: #d1e7dd; font-weight: bold' if col in [period1_label, period2_label] 
                     else '' for col in row.index
                 ]
 
-            st.subheader(f"YTD Comparison by {dimension} (Top {top_n})")
+            st.subheader(f"YTD Comparison by {dimension}")
             st.dataframe(
                 comparison_df.style.format({
                     period1_label: "{:,.0f}",
@@ -330,6 +346,13 @@ elif choice == "YTD":
                 use_container_width=True
             )
 
+            # Excel download for YTD
+            excel_stream_ytd = io.BytesIO()
+            with pd.ExcelWriter(excel_stream_ytd, engine='xlsxwriter') as writer:
+                comparison_df.to_excel(writer, sheet_name="YTD Comparison")
+            excel_stream_ytd.seek(0)
+            st.download_button("Download Excel - YTD Comparison", data=excel_stream_ytd, file_name="YTD_Comparison.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
             st.subheader("YTD Comparison Chart")
             fig = go.Figure()
             fig.add_trace(go.Bar(x=comparison_df.index, y=comparison_df[period1_label], name=period1_label, marker_color='skyblue'))
@@ -337,17 +360,9 @@ elif choice == "YTD":
             fig.add_trace(go.Scatter(x=comparison_df.index, y=comparison_df["Comparison %"], name="% Difference", mode='lines+markers', yaxis='y2', line=dict(color='green', width=3)))
             fig.update_layout(
                 barmode='group',
-                title=f"YTD Comparison by {dimension} (Top {top_n})",
+                title=f"YTD Comparison by {dimension}",
                 xaxis_title=dimension,
                 yaxis=dict(title="Net Value"),
                 yaxis2=dict(title="% Difference", overlaying='y', side='right', showgrid=False)
             )
             st.plotly_chart(fig, use_container_width=True)
-
-            # Excel download
-            excel_stream = io.BytesIO()
-            with pd.ExcelWriter(excel_stream, engine='xlsxwriter') as writer:
-                comparison_df.to_excel(writer, sheet_name="YTD Comparison")
-            excel_stream.seek(0)
-            st.download_button("Download Excel", data=excel_stream, file_name=f"ytd_comparison_top_{top_n}_{dimension}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
