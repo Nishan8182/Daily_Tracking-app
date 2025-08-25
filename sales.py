@@ -14,21 +14,35 @@ st.set_page_config(page_title="📊 Haneef Sales Dashboard", layout="wide", page
 # --- Cache Data Loading ---
 @st.cache_data
 def load_data(file):
+    """
+    Returns: sales_df, target_df, ytd_df (ytd_df may be empty DataFrame if sheet not present)
+    """
     try:
-        sales_df = pd.read_excel(file, sheet_name="sales data")
-        target_df = pd.read_excel(file, sheet_name="Target")
+        xls = pd.ExcelFile(file)
+        sales_df = pd.read_excel(xls, sheet_name="sales data")
+        target_df = pd.read_excel(xls, sheet_name="Target")
+        # Try to load YTD sheet (optional); if not present return empty df
+        if "YTD" in xls.sheet_names:
+            ytd_df = pd.read_excel(xls, sheet_name="YTD")
+        else:
+            ytd_df = pd.DataFrame()
         sales_df["Billing Date"] = pd.to_datetime(sales_df["Billing Date"])
-        return sales_df, target_df
+        if not ytd_df.empty and "Billing Date" in ytd_df.columns:
+            ytd_df["Billing Date"] = pd.to_datetime(ytd_df["Billing Date"])
+        return sales_df, target_df, ytd_df
     except Exception as e:
         st.error(f"Error loading Excel file: {e}")
-        return None, None
+        return None, None, pd.DataFrame()
 
 # --- PPTX Export ---
 def create_pptx(report_df, billing_df, py_df, figs_dict):
     prs = Presentation()
     slide = prs.slides.add_slide(prs.slide_layouts[0])
     slide.shapes.title.text = "Sales & Targets Report"
-    slide.placeholders[1].text = "Generated from Sales Data"
+    try:
+        slide.placeholders[1].text = "Generated from Sales Data"
+    except Exception:
+        pass
 
     def add_table_slide(df, title):
         slide = prs.slides.add_slide(prs.slide_layouts[5])
@@ -41,7 +55,10 @@ def create_pptx(report_df, billing_df, py_df, figs_dict):
         for i, row in enumerate(df.itertuples(index=False), start=1):
             for j, val in enumerate(row):
                 if isinstance(val, (int, float, np.integer, np.floating)):
-                    table.cell(i, j).text = f"{val:,.0f}"
+                    try:
+                        table.cell(i, j).text = f"{val:,.0f}"
+                    except Exception:
+                        table.cell(i, j).text = str(val)
                 else:
                     table.cell(i, j).text = str(val)
 
@@ -86,7 +103,7 @@ def color_positive_negative(val):
 
 # --- Sidebar Menu ---
 st.sidebar.title("Menu")
-menu = ["Home", "Sales Tracking", "YTD", "Custom Analysis"]
+menu = ["Home", "Sales Tracking", "YTD", "Custom Analysis", "SP/PY Target Allocation"]
 choice = st.sidebar.selectbox("Navigate", menu)
 
 # --- Home Page ---
@@ -99,9 +116,9 @@ if choice == "Home":
         - Interactive charts for trends & gaps
         - Download reports in PPTX & Excel
         - Compare sales across two custom periods
-        - NEW: Custom Analysis (pick any column(s) to compare)
-
-        Use the sidebar to navigate to **Sales Tracking**, **YTD**, or **Custom Analysis**.
+        - SP/PY Target Allocation (based on last 6 months sales from YTD or sales data)
+        
+        Use the sidebar to navigate to **Sales Tracking**, **YTD**, **Custom Analysis**, or **SP/PY Target Allocation**.
         """
     )
 
@@ -111,7 +128,7 @@ elif choice == "Sales Tracking":
     uploaded_file = st.file_uploader("Upload your Excel file", type=["xlsx"], key="sales_upload")
 
     if uploaded_file:
-        sales_df, target_df = load_data(uploaded_file)
+        sales_df, target_df, ytd_df = load_data(uploaded_file)
         if sales_df is not None and target_df is not None:
 
             # --- Filters ---
@@ -451,9 +468,15 @@ elif choice == "Sales Tracking":
                 figs_dict = {}
 
                 # Use report_df from Summary tab
-                fig_ka = px.bar(report_df.reset_index(), x="Driver Name EN", y="KA Sales",
+                # Reset index to get Driver Name EN as column for px
+                report_df_for_chart = report_df.reset_index().rename(columns={'index':'Driver Name EN'}) if report_df.index.name is not None else report_df.reset_index()
+                # Try to ensure Driver Name EN column exists
+                if "Driver Name EN" not in report_df_for_chart.columns:
+                    report_df_for_chart = report_df_for_chart.rename(columns={report_df_for_chart.columns[0]: "Driver Name EN"})
+
+                fig_ka = px.bar(report_df_for_chart, x="Driver Name EN", y="KA Sales",
                                 title="KA Sales by Salesman", text="KA Sales")
-                fig_talabat = px.bar(report_df.reset_index(), x="Driver Name EN", y="Talabat Sales",
+                fig_talabat = px.bar(report_df_for_chart, x="Driver Name EN", y="Talabat Sales",
                                      title="Talabat Sales by Salesman", text="Talabat Sales")
                 st.plotly_chart(fig_ka, use_container_width=True)
                 st.plotly_chart(fig_talabat, use_container_width=True)
@@ -465,7 +488,6 @@ elif choice == "Sales Tracking":
             with tabs[3]:
                 st.subheader("Download PPTX Report")
                 # Reuse items from Summary Tables tab
-                # (report_df, billing_df, py_df, figs_dict)
                 pptx_data = create_pptx(report_df, billing_df, py_df, figs_dict)
                 st.download_button("Download PPTX Report", data=pptx_data, file_name="sales_report.pptx")
 
@@ -495,7 +517,7 @@ elif choice == "YTD":
     uploaded_file = st.file_uploader("Upload Excel for YTD Comparison", type=["xlsx"], key="ytd_upload")
 
     if uploaded_file:
-        sales_df, _ = load_data(uploaded_file)
+        sales_df, target_df, ytd_df = load_data(uploaded_file)
         if sales_df is not None:
             dimension = st.selectbox("Compare By", ["Driver Name EN", "PY Name 1", "SP Name1"])
 
@@ -599,7 +621,7 @@ elif choice == "Custom Analysis":
     uploaded_file = st.file_uploader("Upload Excel for Custom Analysis", type=["xlsx"], key="custom_upload")
 
     if uploaded_file:
-        sales_df, _ = load_data(uploaded_file)
+        sales_df, target_df, ytd_df = load_data(uploaded_file)
         if sales_df is not None:
             with st.expander("👀 Show available columns in your data"):
                 col_info = pd.DataFrame({"Column": sales_df.columns, "Dtype": [str(sales_df[c].dtype) for c in sales_df.columns]})
@@ -729,3 +751,119 @@ elif choice == "Custom Analysis":
                     title="Custom Comparison - % Difference"
                 )
                 st.plotly_chart(fig2, use_container_width=True)
+
+# --- SP/PY Target Allocation Page ---
+elif choice == "SP/PY Target Allocation":
+    st.title("🎯 SP / PY Target Allocation")
+    uploaded_file = st.file_uploader("Upload Excel for Target Allocation (sales data + Target + optional YTD)", type=["xlsx"], key="alloc_upload")
+
+    if uploaded_file:
+        sales_df, target_df, ytd_df = load_data(uploaded_file)
+        if sales_df is None or target_df is None:
+            st.error("Please upload a valid file with 'sales data' and 'Target' sheets.")
+        else:
+            # If YTD sheet present use it for last 6 months; else use sales_df
+            base_df_for_6m = ytd_df if (isinstance(ytd_df, pd.DataFrame) and not ytd_df.empty) else sales_df
+
+            last_6m_cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=6)
+            df_6m = base_df_for_6m[base_df_for_6m["Billing Date"] >= last_6m_cutoff].copy()
+
+            # total KA target
+            ka_total = float(target_df["KA Target"].sum()) if "KA Target" in target_df.columns else 0.0
+
+            # --- SP allocation ---
+            if "SP Name1" in df_6m.columns:
+                sp_sales_6m = df_6m.groupby("SP Name1")["Net Value"].sum()
+            else:
+                sp_sales_6m = pd.Series(dtype=float)
+
+            # If no last-6-months data, create empty series to avoid divide by zero
+            if sp_sales_6m.sum() == 0:
+                sp_alloc = pd.Series(0, index=sp_sales_6m.index)
+            else:
+                sp_alloc = (sp_sales_6m / sp_sales_6m.sum() * ka_total)
+
+            # Current month sales come from sales_df sheet
+            today = pd.Timestamp.today().normalize()
+            cm_start = today.replace(day=1)
+            cm_end = cm_start + pd.offsets.MonthEnd(0)
+            df_curr_month = sales_df[(sales_df["Billing Date"] >= cm_start) & (sales_df["Billing Date"] <= cm_end)].copy()
+
+            if "SP Name1" in df_curr_month.columns and not df_curr_month.empty:
+                sp_curr_sales = df_curr_month.groupby("SP Name1")["Net Value"].sum()
+            else:
+                sp_curr_sales = pd.Series(dtype=float)
+
+            # Align indices, fill NaNs with 0 before converting to ints
+            sp_index = sp_alloc.index.union(sp_curr_sales.index)
+            sp_alloc_clean = sp_alloc.reindex(sp_index).fillna(0)
+            sp_curr_clean = sp_curr_sales.reindex(sp_index).fillna(0)
+            sp_balance = (sp_alloc_clean - sp_curr_clean).fillna(0)
+
+            # Round and convert to ints safely
+            sp_alloc_int = sp_alloc_clean.round(0).astype(int)
+            sp_curr_int = sp_curr_clean.round(0).astype(int)
+            sp_balance_int = sp_balance.round(0).astype(int)
+
+            sp_table = pd.DataFrame({
+                "Target Allocation": sp_alloc_int,
+                "Current Month Sales": sp_curr_int,
+                "Balance": sp_balance_int
+            })
+            # Add totals row
+            totals_sp = sp_table.sum(numeric_only=True).to_frame().T
+            totals_sp.index = ["Total"]
+            sp_table = pd.concat([sp_table, totals_sp])
+
+            st.subheader("SP Name1 Target Allocation")
+            st.dataframe(sp_table.style.format("{:,.0f}"), use_container_width=True)
+
+            # --- PY allocation ---
+            if "PY Name 1" in df_6m.columns:
+                py_sales_6m = df_6m.groupby("PY Name 1")["Net Value"].sum()
+            else:
+                py_sales_6m = pd.Series(dtype=float)
+
+            if py_sales_6m.sum() == 0:
+                py_alloc = pd.Series(0, index=py_sales_6m.index)
+            else:
+                py_alloc = (py_sales_6m / py_sales_6m.sum() * ka_total)
+
+            if "PY Name 1" in df_curr_month.columns and not df_curr_month.empty:
+                py_curr_sales = df_curr_month.groupby("PY Name 1")["Net Value"].sum()
+            else:
+                py_curr_sales = pd.Series(dtype=float)
+
+            py_index = py_alloc.index.union(py_curr_sales.index)
+            py_alloc_clean = py_alloc.reindex(py_index).fillna(0)
+            py_curr_clean = py_curr_sales.reindex(py_index).fillna(0)
+            py_balance = (py_alloc_clean - py_curr_clean).fillna(0)
+
+            py_alloc_int = py_alloc_clean.round(0).astype(int)
+            py_curr_int = py_curr_clean.round(0).astype(int)
+            py_balance_int = py_balance.round(0).astype(int)
+
+            py_table = pd.DataFrame({
+                "Target Allocation": py_alloc_int,
+                "Current Month Sales": py_curr_int,
+                "Balance": py_balance_int
+            })
+            totals_py = py_table.sum(numeric_only=True).to_frame().T
+            totals_py.index = ["Total"]
+            py_table = pd.concat([py_table, totals_py])
+
+            st.subheader("PY Name1 Target Allocation")
+            st.dataframe(py_table.style.format("{:,.0f}"), use_container_width=True)
+
+            # Excel download for both tables
+            excel_stream_alloc = io.BytesIO()
+            with pd.ExcelWriter(excel_stream_alloc, engine="xlsxwriter") as writer:
+                sp_table.to_excel(writer, sheet_name="SP_Target_Allocation")
+                py_table.to_excel(writer, sheet_name="PY_Target_Allocation")
+            excel_stream_alloc.seek(0)
+            st.download_button(
+                "Download Excel - SP/PY Target Allocation",
+                data=excel_stream_alloc,
+                file_name="SP_PY_Target_Allocation.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
