@@ -9,7 +9,7 @@ import io
 from sklearn.linear_model import LinearRegression
 
 # --- Page Config ---
-st.set_page_config(page_title="📊 Haneef Sales Dashboard", layout="wide", page_icon="📈")
+st.set_page_config(page_title="📊 Haneef Data Dashboard", layout="wide", page_icon="📈")
 
 # --- Cache Data Loading ---
 @st.cache_data
@@ -108,7 +108,7 @@ choice = st.sidebar.selectbox("Navigate", menu)
 
 # --- Home Page ---
 if choice == "Home":
-    st.title("🏠 Welcome to Haneef Sales Dashboard")
+    st.title("🏠 Welcome to Haneef Data Dashboard")
     st.markdown(
         """
         **Features:**
