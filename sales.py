@@ -9,7 +9,7 @@ import io
 from sklearn.linear_model import LinearRegression
 
 # --- Page Config ---
-st.set_page_config(page_title="📊 Haneef Sales Dashboard", layout="wide", page_icon="📈")
+st.set_page_config(page_title="📊 Haneef Sales Data Dashboard", layout="wide", page_icon="📈")
 
 # --- Cache Data Loading ---
 @st.cache_data
@@ -867,3 +867,4 @@ elif choice == "SP/PY Target Allocation":
                 file_name="SP_PY_Target_Allocation.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
+
