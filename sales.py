@@ -882,83 +882,179 @@ elif choice == "Custom Analysis":
 
 # --- SP/PY Target Allocation Page ---
 elif choice == "SP/PY Target Allocation":
-    st.title("🎯 SP / PY Target Allocation")
-    uploaded_file = st.file_uploader("📂 Upload Excel for Allocation", type=["xlsx"], key="alloc_upload")
+    st.title("🎯 SP/PY Target Allocation")
+    uploaded_file = st.file_uploader("📂 Upload Excel File", type=["xlsx"], key="allocation_upload")
 
     if uploaded_file:
-        sales_df, target_df, ytd_df = load_data(uploaded_file)
-        if sales_df.empty or target_df.empty:
-            st.error("❌ Please upload a valid file with 'sales data' and 'Target' sheets.")
+        try:
+            xls = pd.ExcelFile(uploaded_file)
+            
+            required_sheets = {"YTD", "sales data"}
+            if not required_sheets.issubset(xls.sheet_names):
+                st.error(f"❌ The uploaded file must contain the following sheets: {', '.join(required_sheets)}.")
+                st.stop()
+            
+            ytd_df = pd.read_excel(xls, sheet_name="YTD")
+            sales_df = pd.read_excel(xls, sheet_name="sales data")
+
+            # Validate required columns
+            required_cols_ytd = ["Billing Date", "SP Name1", "PY Name 1", "Net Value"]
+            if not all(col in ytd_df.columns for col in required_cols_ytd):
+                st.error(f"❌ Missing required columns in 'YTD' sheet: {set(required_cols_ytd) - set(ytd_df.columns)}")
+                st.stop()
+
+            required_cols_sales = ["Billing Date", "SP Name1", "PY Name 1", "Net Value"]
+            if not all(col in sales_df.columns for col in required_cols_sales):
+                st.error(f"❌ Missing required columns in 'sales data' sheet: {set(required_cols_sales) - set(sales_df.columns)}")
+                st.stop()
+
+            # Ensure date columns are in datetime format
+            ytd_df["Billing Date"] = pd.to_datetime(ytd_df["Billing Date"], errors='coerce')
+            sales_df["Billing Date"] = pd.to_datetime(sales_df["Billing Date"], errors='coerce')
+
+        except Exception as e:
+            st.error(f"❌ Error loading or processing Excel file: {e}")
+            st.stop()
+
+        # --- User Inputs & Target Selection ---
+        st.subheader("Configuration")
+        allocation_type = st.radio("Select Target Allocation Type", ["Salesperson (SP Name1)", "Customer (PY Name 1)"])
+        group_col = "SP Name1" if allocation_type == "Salesperson (SP Name1)" else "PY Name 1"
+        
+        target_option = st.radio("Select Target Input Option", ["Manual", "Auto (from 'Target' sheet)"])
+        
+        total_target = 0
+        if target_option == "Manual":
+            total_target = st.number_input(
+                "Enter the Total Target to be Allocated for this Month",
+                min_value=0,
+                value=1000000,
+                step=1000
+            )
+        else: # Auto from sheet
+            if "Target" not in xls.sheet_names:
+                st.error("❌ 'Target' sheet not found. Please upload a file with this sheet for 'Auto' mode.")
+                st.stop()
+            try:
+                ka_target_df = pd.read_excel(xls, sheet_name="Target")
+                if "KA Target" not in ka_target_df.columns:
+                    st.error("❌ 'KA Target' column not found in 'Target' sheet.")
+                    st.stop()
+                total_target = ka_target_df["KA Target"].sum()
+                st.info(f"Using Total Target from 'Target' sheet: KD {total_target:,.0f}")
+            except Exception as e:
+                st.error(f"❌ Error reading 'Target' sheet: {e}")
+                st.stop()
+
+        if total_target <= 0:
+            st.warning("Please ensure the total target is greater than 0.")
+            st.stop()
+
+        # --- Data Period Selection ---
+        st.subheader("Historical Data Period")
+        data_period_option = st.radio("Select Historical Data Period", ["Last 6 Months", "Manual Days"])
+        
+        if data_period_option == "Last 6 Months":
+            lookback_period = pd.DateOffset(months=6)
+            days_label = "6 Months"
+            months_count = 6
         else:
-            with st.container():
-                base_df_for_6m = ytd_df if not ytd_df.empty else sales_df
-                last_6m_cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=6)
-                df_6m = base_df_for_6m[base_df_for_6m["Billing Date"] >= last_6m_cutoff].copy()
-                ka_total = float(target_df["KA Target"].sum()) if "KA Target" in target_df.columns else 0.0
+            manual_days = st.number_input("Enter number of days for historical data", min_value=1, value=180, step=1)
+            lookback_period = pd.DateOffset(days=manual_days)
+            days_label = f"{manual_days} Days"
+            months_count = manual_days / 30  # Approximation for average monthly sales calculation
+        
+        # --- Data Processing ---
+        today = pd.Timestamp.today().normalize()
+        start_date = today - lookback_period
 
-                if "SP Name1" in df_6m.columns:
-                    sp_sales_6m = df_6m.groupby("SP Name1")["Net Value"].sum()
-                    sp_alloc = (sp_sales_6m / sp_sales_6m.sum() * ka_total) if sp_sales_6m.sum() != 0 else pd.Series(0, index=sp_sales_6m.index)
-                else:
-                    st.warning("⚠️ SP Name1 column not found. SP allocation table will be empty.")
-                    sp_alloc = pd.Series(dtype=float)
+        historical_df = ytd_df[
+            (ytd_df["Billing Date"] >= start_date) &
+            (ytd_df["Billing Date"] < today)
+        ].copy()
 
-                today = pd.Timestamp.today().normalize()
-                cm_start = today.replace(day=1)
-                cm_end = cm_start + pd.offsets.MonthEnd(0)
-                df_curr_month = sales_df[(sales_df["Billing Date"] >= cm_start) & (sales_df["Billing Date"] <= cm_end)].copy()
-                sp_curr_sales = df_curr_month.groupby("SP Name1")["Net Value"].sum() if "SP Name1" in df_curr_month.columns and not df_curr_month.empty else pd.Series(dtype=float)
+        if historical_df.empty:
+            st.warning(f"⚠️ No sales data available in the 'YTD' sheet for the last {days_label}.")
+            st.stop()
 
-                sp_index = sp_alloc.index.union(sp_curr_sales.index)
-                sp_alloc_clean = sp_alloc.reindex(sp_index).fillna(0).round(0).astype(int)
-                sp_curr_clean = sp_curr_sales.reindex(sp_index).fillna(0).round(0).astype(int)
-                sp_balance = (sp_alloc_clean - sp_curr_clean).round(0).astype(int)
+        historical_sales = historical_df.groupby(group_col)["Net Value"].sum()
+        total_historical_sales_value = historical_sales.sum()
+        
+        # Calculate and display the percentage
+        if total_target > 0:
+            average_historical_sales = total_historical_sales_value / months_count
+            average_sales_percentage = (average_historical_sales / total_target) * 100
+            st.metric(
+                label="Percentage of Average Sales vs. Target",
+                value=f"KD {average_historical_sales:,.0f} / {average_sales_percentage:.2f}%"
+            )
+        
+        current_month_sales_df = sales_df[
+            (sales_df["Billing Date"].dt.month == today.month) &
+            (sales_df["Billing Date"].dt.year == today.year)
+        ].copy()
+        current_month_sales = current_month_sales_df.groupby(group_col)["Net Value"].sum()
+        
+        # --- Create the Target Allocation Table ---
+        allocation_table = pd.DataFrame(index=historical_sales.index.union(current_month_sales.index).unique())
+        allocation_table.index.name = "Name"
 
-                sp_table = pd.DataFrame({
-                    "Target Allocation": sp_alloc_clean,
-                    "Current Month Sales": sp_curr_clean,
-                    "Balance": sp_balance
-                })
-                totals_sp = sp_table.sum(numeric_only=True).to_frame().T
-                totals_sp.index = ["Total"]
-                sp_table = pd.concat([sp_table, totals_sp])
+        allocation_table[f"Last {days_label} Total Sales"] = historical_sales.reindex(allocation_table.index, fill_value=0)
+        allocation_table[f"Last {days_label} Average Sales"] = (allocation_table[f"Last {days_label} Total Sales"] / months_count).fillna(0)
+        
+        if total_historical_sales_value > 0:
+            allocation_table["This Month Auto-Allocated Target"] = (allocation_table[f"Last {days_label} Total Sales"] / total_historical_sales_value * total_target).fillna(0)
+        else:
+            allocation_table["This Month Auto-Allocated Target"] = 0
+            st.warning("Total historical sales for the selected period is zero. Cannot perform performance-based allocation. Targets are set to 0.")
 
-                st.subheader("🏷️ SP Name1 Target Allocation")
-                st.dataframe(sp_table.style.format("{:,.0f}").applymap(color_positive_negative, subset=["Balance"]), use_container_width=True)
+        allocation_table["Current Month Sales"] = current_month_sales.reindex(allocation_table.index, fill_value=0)
+        
+        # Rename the column
+        allocation_table["Target Balance"] = allocation_table["This Month Auto-Allocated Target"] - allocation_table["Current Month Sales"]
+        
+        allocation_table = allocation_table.fillna(0)
 
-                if "PY Name 1" in df_6m.columns:
-                    py_sales_6m = df_6m.groupby("PY Name 1")["Net Value"].sum()
-                    py_alloc = (py_sales_6m / py_sales_6m.sum() * ka_total) if py_sales_6m.sum() != 0 else pd.Series(0, index=py_sales_6m.index)
-                else:
-                    st.warning("⚠️ PY Name 1 column not found. PY allocation table will be empty.")
-                    py_alloc = pd.Series(dtype=float)
+        # Add a total row
+        total_row = allocation_table.sum().to_frame().T
+        total_row.index = ["Total"]
+        allocation_table_with_total = pd.concat([allocation_table, total_row])
 
-                py_curr_sales = df_curr_month.groupby("PY Name 1")["Net Value"].sum() if "PY Name 1" in df_curr_month.columns and not df_curr_month.empty else pd.Series(dtype=float)
-                py_index = py_alloc.index.union(py_curr_sales.index)
-                py_alloc_clean = py_alloc.reindex(py_index).fillna(0).round(0).astype(int)
-                py_curr_clean = py_curr_sales.reindex(py_index).fillna(0).round(0).astype(int)
-                py_balance = (py_alloc_clean - py_curr_clean).round(0).astype(int)
+        # Function to apply color styling
+        def color_target_balance(val):
+            # Only apply color to numbers, not the 'Total' label
+            if isinstance(val, (int, float)):
+                color = 'red' if val > 0 else 'green'
+                return f'color: {color}'
+            return ''
 
-                py_table = pd.DataFrame({
-                    "Target Allocation": py_alloc_clean,
-                    "Current Month Sales": py_curr_clean,
-                    "Balance": py_balance
-                })
-                totals_py = py_table.sum(numeric_only=True).to_frame().T
-                totals_py.index = ["Total"]
-                py_table = pd.concat([py_table, totals_py])
+        # Apply bold styling to all cells in the dataframe
+        def bold_all(val):
+            return 'font-weight: bold'
 
-                st.subheader("🏬 PY Name1 Target Allocation")
-                st.dataframe(py_table.style.format("{:,.0f}").applymap(color_positive_negative, subset=["Balance"]), use_container_width=True)
+        # Display the table with integer formatting and styling
+        st.subheader(f"📊 Auto-Allocated Targets Based on Last {days_label} Performance")
+        st.dataframe(
+            allocation_table_with_total.astype(int).style
+            .format("{:,.0f}")
+            .applymap(color_target_balance, subset=['Target Balance'])
+            .applymap(bold_all),
+            use_container_width=True
+        )
 
-                excel_stream_alloc = io.BytesIO()
-                with pd.ExcelWriter(excel_stream_alloc, engine="xlsxwriter") as writer:
-                    sp_table.to_excel(writer, sheet_name="SP_Target_Allocation")
-                    py_table.to_excel(writer, sheet_name="PY_Target_Allocation")
-                excel_stream_alloc.seek(0)
-                st.download_button(
-                    "💾 Download Excel - SP/PY Allocation",
-                    data=excel_stream_alloc,
-                    file_name="SP_PY_Target_Allocation.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+        # --- Download Button ---
+        @st.cache_data
+        def convert_df_to_excel(df):
+            output = io.BytesIO()
+            df = df.astype(int)
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                df.to_excel(writer, sheet_name="Allocated_Targets")
+            return output.getvalue()
+
+        excel_data = convert_df_to_excel(allocation_table)
+        st.download_button(
+            "💾 Download Target Allocation Table",
+            data=excel_data,
+            file_name=f"target_allocation_{allocation_type.replace(' ', '_')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
