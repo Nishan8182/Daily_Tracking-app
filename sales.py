@@ -918,8 +918,8 @@ elif choice == "SP/PY Target Allocation":
 
         # --- User Inputs & Target Selection ---
         st.subheader("Configuration")
-        allocation_type = st.radio("Select Target Allocation Type", ["Salesperson (SP Name1)", "Customer (PY Name 1)"])
-        group_col = "SP Name1" if allocation_type == "Salesperson (SP Name1)" else "PY Name 1"
+        allocation_type = st.radio("Select Target Allocation Type", ["By Branch (SP Name1)", "Customer (PY Name 1)"])
+        group_col = "SP Name1" if allocation_type == "By Branch (SP Name1)" else "PY Name 1"
         
         target_option = st.radio("Select Target Input Option", ["Manual", "Auto (from 'Target' sheet)"])
         
@@ -1058,3 +1058,4 @@ elif choice == "SP/PY Target Allocation":
             file_name=f"target_allocation_{allocation_type.replace(' ', '_')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
