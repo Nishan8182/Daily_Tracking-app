@@ -952,25 +952,37 @@ elif choice == "SP/PY Target Allocation":
 
         # --- Data Period Selection ---
         st.subheader("Historical Data Period")
-        data_period_option = st.radio("Select Historical Data Period", ["Last 6 Months", "Manual Days"])
+        today = pd.Timestamp.today().normalize()
+        data_period_option = st.radio("Select Historical Data Period", ["Last 6 Months", "Manual Days"], index=1)
         
         if data_period_option == "Last 6 Months":
             lookback_period = pd.DateOffset(months=6)
             days_label = "6 Months"
             months_count = 6
+            end_date_selected = today
+            start_date_selected = today - lookback_period
         else:
-            manual_days = st.number_input("Enter number of days for historical data", min_value=1, value=180, step=1)
-            lookback_period = pd.DateOffset(days=manual_days)
-            days_label = f"{manual_days} Days"
-            months_count = manual_days / 30  # Approximation for average monthly sales calculation
-        
-        # --- Data Processing ---
-        today = pd.Timestamp.today().normalize()
-        start_date = today - lookback_period
+            # New and corrected code for manual date selection
+            start_date_manual = today - pd.DateOffset(days=180) # Default to 180 days ago
+            selected_dates = st.date_input("Select date range", value=(start_date_manual, today))
+            
+            if len(selected_dates) == 2:
+                start_date_selected = selected_dates[0]
+                end_date_selected = selected_dates[1]
+                
+                lookback_period = end_date_selected - start_date_selected
+                days_label = f"From {start_date_selected.strftime('%Y-%m-%d')} to {end_date_selected.strftime('%Y-%m-%d')}"
+                months_count = lookback_period.days / 30  # Approximation for average monthly sales calculation
+            else:
+                st.warning("Please select both a start and an end date.")
+                st.stop()
 
+        # --- Data Processing ---
+        # The start_date and end_date are now determined by the date input
+        # No need to recalculate them here
         historical_df = ytd_df[
-            (ytd_df["Billing Date"] >= start_date) &
-            (ytd_df["Billing Date"] < today)
+            (ytd_df["Billing Date"] >= pd.Timestamp(start_date_selected)) &
+            (ytd_df["Billing Date"] <= pd.Timestamp(end_date_selected))
         ].copy()
 
         if historical_df.empty:
@@ -980,22 +992,73 @@ elif choice == "SP/PY Target Allocation":
         historical_sales = historical_df.groupby(group_col)["Net Value"].sum()
         total_historical_sales_value = historical_sales.sum()
         
-        # Calculate and display the percentage
-        if total_target > 0:
-            average_historical_sales = total_historical_sales_value / months_count
-            average_sales_percentage = (average_historical_sales / total_target) * 100
-            st.metric(
-                label="Percentage of Average Sales vs. Target",
-                value=f"KD {average_historical_sales:,.0f} / {average_sales_percentage:.2f}%"
-            )
-        
+        # Calculate current month sales total for the new metric
         current_month_sales_df = sales_df[
             (sales_df["Billing Date"].dt.month == today.month) &
             (sales_df["Billing Date"].dt.year == today.year)
         ].copy()
         current_month_sales = current_month_sales_df.groupby(group_col)["Net Value"].sum()
+        total_current_month_sales = current_month_sales.sum()
+
+        # Calculate target balance total for the new metric
+        target_balance = total_target - total_current_month_sales
         
+        # Calculate and display the new metrics
+        if total_target > 0:
+            average_historical_sales = total_historical_sales_value / months_count
+            
+            st.subheader("🎯 Target Analysis")
+            
+            col1, col2, col3 = st.columns(3)
+            col4, col5 = st.columns(2)
+            
+            with col1:
+                st.metric(
+                    label=f"Historical Sales Total ({days_label})",
+                    value=f"KD {total_historical_sales_value:,.0f}"
+                )
+            
+            with col2:
+                st.metric(
+                    label="Allocated Target Total",
+                    value=f"KD {total_target:,.0f}"
+                )
+                
+            with col3:
+                # New calculation to show percentage increase needed from historical sales
+                if average_historical_sales > 0:
+                    percentage_increase_needed = ((total_target - average_historical_sales) / average_historical_sales) * 100
+                    delta_value = total_target - average_historical_sales
+                    st.metric(
+                        label="Percentage Increase from Avg Sales to Target",
+                        value=f"{percentage_increase_needed:.2f}%",
+                        delta=f"KD {delta_value:,.0f} more needed"
+                    )
+                else:
+                    st.metric(
+                        label="Percentage Increase from Avg Sales to Target",
+                        value="N/A",
+                        delta="Historical sales are zero"
+                    )
+            
+            st.markdown("---")
+            
+            with col4:
+                st.metric(
+                    label="Current Month Sales Total",
+                    value=f"KD {total_current_month_sales:,.0f}"
+                )
+                
+            with col5:
+                st.metric(
+                    label="Total Target Balance",
+                    value=f"KD {target_balance:,.0f}",
+                    delta=f"{'KD' if target_balance >= 0 else ''} {target_balance:,.0f}"
+                )
+
         # --- Create the Target Allocation Table ---
+        current_month_sales = current_month_sales_df.groupby(group_col)["Net Value"].sum()
+        
         allocation_table = pd.DataFrame(index=historical_sales.index.union(current_month_sales.index).unique())
         allocation_table.index.name = "Name"
 
@@ -1058,4 +1121,3 @@ elif choice == "SP/PY Target Allocation":
             file_name=f"target_allocation_{allocation_type.replace(' ', '_')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
