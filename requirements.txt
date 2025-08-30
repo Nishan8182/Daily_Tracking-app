@@ -9,5 +9,6 @@ kaleido
 matplotlib
 scikit-learn
 kaleido
+statsmodels
 
 
