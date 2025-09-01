@@ -1,4 +1,3 @@
-# save as sales_app_single_upload.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -136,34 +135,61 @@ else:
 # --- Cache Data Loading ---
 @st.cache_data
 def load_data(file):
-    """
-    Returns: sales_df, target_df, ytd_df (empty DataFrames if sheets are missing or invalid)
-    """
+    # Returns: sales_df, target_df, ytd_df, channels_df
+    # Normalizes 'PY Name 1' and 'Channels' to lower-case stripped values for reliable merging.
     with st.spinner("⏳ Loading Excel data..."):
         try:
             xls = pd.ExcelFile(file)
-            required_sheets = ["sales data", "Target"]
-            if not all(sheet in xls.sheet_names for sheet in required_sheets):
-                st.error(f"❌ Excel file must contain sheets: {', '.join(required_sheets)}")
-                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            required_sheets = ["sales data", "Target", "sales channels"]
+            missing = [s for s in required_sheets if s not in xls.sheet_names]
+            if missing:
+                st.error(f"❌ Excel file must contain sheets: {', '.join(required_sheets)}. Missing: {', '.join(missing)}")
+                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
             sales_df = pd.read_excel(xls, sheet_name="sales data")
             target_df = pd.read_excel(xls, sheet_name="Target")
+            channels_df = pd.read_excel(xls, sheet_name="sales channels")
             ytd_df = pd.read_excel(xls, sheet_name="YTD") if "YTD" in xls.sheet_names else pd.DataFrame()
 
             required_cols = ["Billing Date", "Driver Name EN", "Net Value", "Billing Type", "PY Name 1", "SP Name1"]
             if not all(col in sales_df.columns for col in required_cols):
                 st.error(f"❌ Missing required columns: {set(required_cols) - set(sales_df.columns)}")
-                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+            # Normalize key columns for reliable merging: strip and lower
+            def normalize_series(s):
+                try:
+                    return s.astype(str).str.strip().str.lower().replace({'nan': ''})
+                except Exception:
+                    return s
 
             sales_df["Billing Date"] = pd.to_datetime(sales_df["Billing Date"], errors='coerce')
+            # Normalize PY Name 1 in sales_df
+            if "PY Name 1" in sales_df.columns:
+                sales_df["_py_name_norm"] = normalize_series(sales_df["PY Name 1"])
+            else:
+                sales_df["_py_name_norm"] = ""
+
+            # Normalize channels_df PY Name and Channels
+            if "PY Name 1" in channels_df.columns:
+                channels_df["_py_name_norm"] = normalize_series(channels_df["PY Name 1"])
+            else:
+                channels_df["_py_name_norm"] = ""
+            if "Channels" in channels_df.columns:
+                channels_df["_channels_norm"] = normalize_series(channels_df["Channels"])
+            else:
+                channels_df["_channels_norm"] = ""
+
+            # Also normalize in ytd_df if present
             if not ytd_df.empty and "Billing Date" in ytd_df.columns:
                 ytd_df["Billing Date"] = pd.to_datetime(ytd_df["Billing Date"], errors='coerce')
+            if not ytd_df.empty and "PY Name 1" in ytd_df.columns:
+                ytd_df["_py_name_norm"] = normalize_series(ytd_df["PY Name 1"])
 
-            return sales_df, target_df, ytd_df
+            return sales_df, target_df, ytd_df, channels_df
         except Exception as e:
             st.error(f"❌ Error loading Excel file: {e}")
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # --- Helpers: Downloads ---
 @st.cache_data
@@ -296,18 +322,19 @@ def color_positive_negative(val):
 
 # --- SINGLE SIDEBAR UPLOADER ---
 st.sidebar.header("📂 Upload Excel (one-time)")
-st.sidebar.markdown('<div class="tooltip">ℹ️<span class="tooltiptext">Upload an Excel file with sheets: sales data, Target, and optionally YTD.</span></div>', unsafe_allow_html=True)
-uploaded = st.sidebar.file_uploader("Upload Excel file with sheets: 'sales data', 'Target' (optional 'YTD')", type=["xlsx"], key="single_upload")
+st.sidebar.markdown('<div class="tooltip">ℹ️<span class="tooltiptext">Upload an Excel file with sheets: sales data, Target, sales channels, and optionally YTD.</span></div>', unsafe_allow_html=True)
+uploaded = st.sidebar.file_uploader("Upload Excel file with sheets: 'sales data', 'Target', 'sales channels' (optional 'YTD')", type=["xlsx"], key="single_upload")
 if st.sidebar.button("🔁 Clear data"):
-    for k in ["sales_df", "target_df", "ytd_df", "data_loaded"]:
+    for k in ["sales_df", "target_df", "ytd_df", "channels_df", "data_loaded"]:
         if k in st.session_state: del st.session_state[k]
     st.experimental_rerun()
 
 if uploaded is not None and "data_loaded" not in st.session_state:
-    sales_df, target_df, ytd_df = load_data(uploaded)
+    sales_df, target_df, ytd_df, channels_df = load_data(uploaded)
     st.session_state["sales_df"] = sales_df
     st.session_state["target_df"] = target_df
     st.session_state["ytd_df"] = ytd_df
+    st.session_state["channels_df"] = channels_df
     st.session_state["data_loaded"] = True
     st.success("✅ File loaded — now use the menu to go to any page.")
 
@@ -344,6 +371,7 @@ elif choice == "Sales Tracking":
         sales_df = st.session_state["sales_df"]
         target_df = st.session_state["target_df"]
         ytd_df = st.session_state["ytd_df"]
+        channels_df = st.session_state["channels_df"]
 
         # Filters
         st.sidebar.subheader("🔍 Filters (Sales Tracking)")
@@ -412,7 +440,7 @@ elif choice == "Sales Tracking":
                 & (sales_df["Billing Date"] <= date_range[1])
                 & (sales_df["PY Name 1"].isin(py_filter))
                 & (sales_df["SP Name1"].isin(sp_filter))
-            ]
+            ].copy()
 
             if df_filtered.empty:
                 st.warning("⚠️ No data matches the selected filters.")
@@ -427,9 +455,11 @@ elif choice == "Sales Tracking":
                 month_days = pd.date_range(current_month_start, current_month_end, freq="D")
                 working_days_current_month = int(sum(1 for d in month_days if d.weekday() != 4))
 
+                # --- Base aggregates ---
                 total_sales = df_filtered.groupby("Driver Name EN")["Net Value"].sum()
                 talabat_df = df_filtered[df_filtered["PY Name 1"] == "STORES SERVICES KUWAIT CO."]
                 talabat_sales = talabat_df.groupby("Driver Name EN")["Net Value"].sum()
+
                 ka_targets = target_df.set_index("Driver Name EN")["KA Target"] if "KA Target" in target_df.columns else pd.Series(dtype=float)
                 talabat_targets = target_df.set_index("Driver Name EN")["Talabat Target"] if "Talabat Target" in target_df.columns else pd.Series(dtype=float)
 
@@ -454,13 +484,40 @@ elif choice == "Sales Tracking":
                 current_sales_per_day = (total_sales.sum() / days_finish) if days_finish > 0 else 0
                 forecast_month_end_ka = current_sales_per_day * working_days_current_month
 
+                # --- Channels mapping: Market (Retail) vs E-com ---
+                # Step 1: Aggregate sales by normalized PY Name 1 to get a single value per PY
+                df_py_sales = df_filtered.groupby("_py_name_norm")["Net Value"].sum().reset_index()
+
+                # Step 2: Merge the aggregated sales with the channels dataframe on the normalized column
+                df_channels_merged = df_py_sales.merge(
+                    channels_df[["_py_name_norm", "Channels"]],
+                    on="_py_name_norm",
+                    how="left"
+                )
+
+                # Normalize the 'Channels' column to ensure correct grouping, and fill NaNs with a new category
+                df_channels_merged["Channels"] = df_channels_merged["Channels"].str.strip().str.lower().fillna("uncategorized")
+
+                # Step 3: Group by channel and calculate the total sales
+                channel_sales = df_channels_merged.groupby("Channels")["Net Value"].sum()
+
+                # Update logic to combine 'market' and 'uncategorized' into a single 'retail' total
+                total_retail_sales = float(channel_sales.get("market", 0.0) + channel_sales.get("uncategorized", 0.0))
+                total_ecom_sales = float(channel_sales.get("e-com", 0.0))
+                total_channel_sales = total_retail_sales + total_ecom_sales
+                retail_sales_pct = (total_retail_sales / total_channel_sales * 100) if total_channel_sales > 0 else 0
+                ecom_sales_pct = (total_ecom_sales / total_channel_sales * 100) if total_channel_sales > 0 else 0
+
+                # --- KPI Data for PPTX ---
                 kpi_data = {
-                    "Total KA Sales": f"{total_sales.sum():,.0f} ({((total_sales.sum() / total_ka_target_all) * 100):.2f}%)" if total_ka_target_all else "0",
-                    "Total Talabat Sales": f"{talabat_sales.sum():,.0f} ({((talabat_sales.sum() / total_tal_target_all) * 100):.2f}%)" if total_tal_target_all else "0",
-                    "Total KA Gap": f"{ka_gap.sum():,.0f} ({(ka_gap.sum() / total_ka_target_all * 100):.2f}%)" if total_ka_target_all else "0",
-                    "Total Talabat Gap": f"{talabat_gap.sum():,.0f} ({(talabat_gap.sum() / total_tal_target_all * 100):.2f}%)" if total_tal_target_all else "0",
-                    "Top KA Salesman": f"{total_sales_top.idxmax()}: {total_sales_top.max():,.0f}" if not total_sales_top.empty else "—: 0",
-                    "Top Talabat Salesman": f"{talabat_sales_top.idxmax()}: {talabat_sales_top.max():,.0f}" if not talabat_sales_top.empty else "—: 0",
+                    "KA Target": f"{total_ka_target_all:,.0f}",
+                    "Talabat Target": f"{total_tal_target_all:,.0f}",
+                    "Total KA Sales": f"{total_sales.sum():,.0f} ({((total_sales.sum() / total_ka_target_all) * 100):.2f}%)" if total_ka_target_all else f"{total_sales.sum():,.0f} (0.00%)",
+                    "Total Talabat Sales": f"{talabat_sales.sum():,.0f} ({((talabat_sales.sum() / total_tal_target_all) * 100):.2f}%)" if total_tal_target_all else f"{talabat_sales.sum():,.0f} (0.00%)",
+                    "KA Gap": f"{(total_ka_target_all - total_sales.sum()):,.0f}" if total_ka_target_all else "0",
+                    "Total Talabat Gap": f"{talabat_gap.sum():,.0f}" if total_tal_target_all else "0",
+                    "Market Sales": f"{total_retail_sales:,.0f} ({retail_sales_pct:.2f}%)",
+                    "E-com Sales": f"{total_ecom_sales:,.0f} ({ecom_sales_pct:.2f}%)",
                     "Days Finished (working)": f"{days_finish}",
                     "Per Day KA Target": f"{per_day_ka_target:,.0f}",
                     "Current Sales Per Day": f"{current_sales_per_day:,.0f}",
@@ -472,16 +529,28 @@ elif choice == "Sales Tracking":
                 # --- KPIs ---
                 with tabs[0]:
                     st.subheader("🏆 Key Metrics")
-                    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-                    r1c1.metric("Total KA Sales", f"{total_sales.sum():,.0f}", f"{((total_sales.sum() / total_ka_target_all) * 100):.2f}%" if total_ka_target_all else "0.00%")
-                    r1c2.metric("Total Talabat Sales", f"{talabat_sales.sum():,.0f}", f"{((talabat_sales.sum() / total_tal_target_all) * 100):.2f}%" if total_tal_target_all else "0.00%")
-                    r1c3.metric("Total KA Gap", f"{ka_gap.sum():,.0f}", f"{(ka_gap.sum() / total_ka_target_all * 100):.2f}%" if total_ka_target_all else "0.00%")
-                    r1c4.metric("Total Talabat Gap", f"{talabat_gap.sum():,.0f}", f"{(talabat_gap.sum() / total_tal_target_all * 100):.2f}%" if total_tal_target_all else "0.00%")
+                    # Row 1: Targets
+                    r1c1, r1c2 = st.columns(2)
+                    r1c1.metric("KA Target", f"{total_ka_target_all:,.0f}")
+                    r1c2.metric("Talabat Target", f"{total_tal_target_all:,.0f}")
+                    # Row 2: Total Sales and Gap
                     r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-                    r2c1.metric("📅 Days Finished (working)", days_finish)
-                    r2c2.metric("🎯 Per Day KA Target", f"{per_day_ka_target:,.0f}")
-                    r2c3.metric("📈 Current Sales Per Day", f"{current_sales_per_day:,.0f}")
-                    r2c4.metric("🔮 Forecasted Month-End KA Sales", f"{forecast_month_end_ka:,.0f}")
+                    r2c1.metric("Total KA Sales", f"{total_sales.sum():,.0f}", f"{((total_sales.sum() / total_ka_target_all) * 100):.2f}%" if total_ka_target_all else "0.00%")
+                    r2c2.metric("Total Talabat Sales", f"{talabat_sales.sum():,.0f}", f"{((talabat_sales.sum() / total_tal_target_all) * 100):.2f}%" if total_tal_target_all else "0.00%")
+                    r2c3.metric("KA Gap", f"{(total_ka_target_all - total_sales.sum()):,.0f}")
+                    r2c4.metric("Total Talabat Gap", f"{talabat_gap.sum():,.0f}", f"{(talabat_gap.sum() / total_tal_target_all * 100):.2f}%" if total_tal_target_all else "0.00%")
+                    # Row 3: Days and Forecast
+                    r3c1, r3c2 = st.columns(2)
+                    r3c1.metric("📅 Days Finished (working)", days_finish)
+                    r3c2.metric("🎯 Per Day KA Target", f"{per_day_ka_target:,.0f}")
+                    # Row 4: Market Sales and E-com Sales with Percentages
+                    r4c1, r4c2 = st.columns(2)
+                    r4c1.metric("🛒 Market Sales", f"{total_retail_sales:,.0f}", f"{retail_sales_pct:.2f}%")
+                    r4c2.metric("💻 E-com Sales", f"{total_ecom_sales:,.0f}", f"{ecom_sales_pct:.2f}%")
+                    # Row 5: Current Sales and Forecast
+                    r5c1, r5c2 = st.columns(2)
+                    r5c1.metric("📈 Current Sales Per Day", f"{current_sales_per_day:,.0f}")
+                    r5c2.metric("🔮 Forecasted Month-End KA Sales", f"{forecast_month_end_ka:,.0f}")
 
                 # --- TABLES ---
                 with tabs[1]:
@@ -707,7 +776,7 @@ elif choice == "Year to Date Comparison":
             st.subheader(f"📋 Comparison by {dimension}")
             st.dataframe(ytd_comparison.style.format({"First Period Value": "{:,.2f}", "2nd Period Value": "{:,.2f}", "Difference": "{:,.2f}"}), use_container_width=True)
 
-            # Excel download for YTD comparison (requested)
+            # Excel download for YTD comparison
             st.download_button(
                 "⬇️ Download YTD Comparison (Excel)",
                 data=to_excel_bytes(ytd_comparison, sheet_name="YTD_Comparison", index=False),
