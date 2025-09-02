@@ -364,7 +364,7 @@ if choice == "Home":
 
 # --- Sales Tracking Page ---
 elif choice == "Sales Tracking":
-    st.title("📊 Sales Tracking Dashboard")
+    st.title("📊 MTD Tracking ")
     if "data_loaded" not in st.session_state:
         st.warning("⚠️ Please upload the Excel file in the sidebar (one-time).")
     else:
@@ -480,7 +480,7 @@ elif choice == "Sales Tracking":
 
                 total_ka_target_all = float(ka_targets.sum())
                 total_tal_target_all = float(talabat_targets.sum())
-                per_day_ka_target = (total_ka_target_all / days_finish) if days_finish > 0 else 0
+                per_day_ka_target = (total_ka_target_all / working_days_current_month) if working_days_current_month > 0 else 0
                 current_sales_per_day = (total_sales.sum() / days_finish) if days_finish > 0 else 0
                 forecast_month_end_ka = current_sales_per_day * working_days_current_month
 
