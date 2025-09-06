@@ -10,5 +10,6 @@ matplotlib
 scikit-learn
 kaleido
 statsmodels
+Prophet
 
 
