@@ -554,42 +554,64 @@ elif choice == "Sales Tracking":
 
                 # --- TABLES ---
                 with tabs[1]:
-                    # Sales & Targets Summary (colorful)
+
+                    # --- 1️⃣ Sales & Targets Summary ---
                     st.subheader("📋 Sales & Targets Summary")
                     report_df = pd.DataFrame({
-                        "KA Target": ka_targets,
-                        "KA Sales": total_sales,
-                        "KA Remaining": ka_gap,
-                        "KA % Achieved": np.where(ka_targets != 0, (total_sales / ka_targets * 100).round(2), 0),
-                        "Talabat Target": talabat_targets,
-                        "Talabat Sales": talabat_sales,
-                        "Talabat Remaining": talabat_gap,
-                        "Talabat % Achieved": np.where(talabat_targets != 0, (talabat_sales / talabat_targets * 100).round(2), 0)
+                        "Salesman": ka_targets.index,  # Only once
+                        "KA Target": ka_targets.values,
+                        "KA Sales": total_sales.values,
+                        "KA Remaining": ka_gap.values,
+                        "KA % Achieved": np.where(ka_targets.values != 0, (total_sales.values / ka_targets.values * 100).round(0), 0),
+                        "Talabat Target": talabat_targets.values,
+                        "Talabat Sales": talabat_sales.values,
+                        "Talabat Remaining": talabat_gap.values,
+                        "Talabat % Achieved": np.where(talabat_targets.values != 0, (talabat_sales.values / talabat_targets.values * 100).round(0), 0)
                     })
-                    colorful_styles = [
-                        dict(selector='th', props=[('font-weight','800'), ('color','white'), ('background','#1F2937')]),
-                        dict(selector='td', props=[('font-weight','700')])
-                    ]
+
+                    # Total row
+                    total_row = report_df.sum(numeric_only=True).to_frame().T
+                    total_row.index = ["Total"]
+                    total_row["KA % Achieved"] = round(total_row["KA Sales"]/total_row["KA Target"]*100,0) if total_row["KA Target"].iloc[0]!=0 else 0
+                    total_row["Talabat % Achieved"] = round(total_row["Talabat Sales"]/total_row["Talabat Target"]*100,0) if total_row["Talabat Target"].iloc[0]!=0 else 0
+
+                    report_df_with_total = pd.concat([report_df, total_row], ignore_index=False)
+
+                    col_to_color = {
+                        "Salesman": "background-color: #CCFFE6; color:#0F766E; font-weight:700",
+                        "KA Target": "background-color: #CCFFE6; color:#0F766E; font-weight:700",
+                        "KA Sales": "background-color: #CCFFE6; color:#0F766E; font-weight:700",
+                        "KA Remaining": "background-color: #CCFFE6; color:#0F766E; font-weight:700",
+                        "KA % Achieved": "background-color: #CCFFE6; color:#0F766E; font-weight:700",
+                        "Talabat Target": "background-color: #FFE4CC; color:#9A3412; font-weight:700",
+                        "Talabat Sales": "background-color: #FFE4CC; color:#9A3412; font-weight:700",
+                        "Talabat Remaining": "background-color: #FFE4CC; color:#9A3412; font-weight:700",
+                        "Talabat % Achieved": "background-color: #FFE4CC; color:#9A3412; font-weight:700"
+                    }
+
+                    def highlight_columns(s):
+                        return [col_to_color.get(c, "") for c in s.index]
+
+                    def highlight_total_row(row):
+                        return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
+
                     styled_report = (
-                        report_df.style
-                        .set_table_styles(colorful_styles)
-                        .applymap(color_positive_negative, subset=["KA % Achieved", "Talabat % Achieved"])
-                        .highlight_max(subset=["KA % Achieved", "Talabat % Achieved"], color="#FFD700")
-                        .format({
-                            "KA Target": "{:,.0f}", "KA Sales": "{:,.0f}", "KA Remaining": "{:,.0f}",
-                            "KA % Achieved": "{:.2f}%", "Talabat Target": "{:,.0f}", "Talabat Sales": "{:,.0f}",
-                            "Talabat Remaining": "{:,.0f}", "Talabat % Achieved": "{:.2f}%"
-                        })
+                        report_df_with_total.style
+                        .set_table_styles([dict(selector='th', props=[('background','#1F2937'), ('color','white'), ('font-weight','800')])])
+                        .apply(highlight_columns, axis=1)
+                        .apply(highlight_total_row, axis=1)
+                        .format("{:,.0f}", subset=["KA Target","KA Sales","KA Remaining","Talabat Target","Talabat Sales","Talabat Remaining"])
+                        .format("{:.0f}%", subset=["KA % Achieved","Talabat % Achieved"])
                     )
                     st.dataframe(styled_report, use_container_width=True)
                     st.download_button(
                         "⬇️ Download Sales & Targets Summary (Excel)",
-                        data=to_excel_bytes(report_df.reset_index(), sheet_name="Sales_Targets_Summary"),
+                        data=to_excel_bytes(report_df_with_total.reset_index(), sheet_name="Sales_Targets_Summary"),
                         file_name=f"Sales_Targets_Summary_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
-                    # Sales by Billing Type per Salesman (colorful, bright)
+                    # --- 2️⃣ Billing Type Table ---
                     st.subheader("📊 Sales by Billing Type per Salesman")
                     billing_wide = df_filtered.pivot_table(
                         index="Driver Name EN",
@@ -598,41 +620,43 @@ elif choice == "Sales Tracking":
                         aggfunc="sum",
                         fill_value=0
                     )
+
                     required_cols_raw = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
                     billing_wide = billing_wide.reindex(columns=required_cols_raw, fill_value=0)
-                    display_df = billing_wide.rename(columns={"ZFR": "Sales Group", "YKF2": "HHT"})
-                    display_df["Sales Total"] = billing_wide.sum(axis=1)
+                    display_df = billing_wide.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
+                    display_df["Sales Total"] = billing_wide["ZFR"] + billing_wide["YKF2"]
                     display_df["Return"] = billing_wide["YKRE"] + billing_wide["ZRE"]
-                    display_df["Return %"] = np.where(display_df["Sales Total"] != 0, (display_df["Return"] / display_df["Sales Total"] * 100).round(2), 0)
                     display_df["Cancel Total"] = billing_wide[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
-                    ordered_cols = ["Sales Group", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN", "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
+                    display_df["Return %"] = np.where(display_df["Sales Total"] != 0, (display_df["Return"] / display_df["Sales Total"] * 100).round(0), 0)
+
+                    ordered_cols = ["Presales", "HHT", "Sales Total","YKS1","YKS2","ZCAN","Cancel Total","YKRE","ZRE","Return","Return %"]
                     display_df = display_df.reindex(columns=ordered_cols, fill_value=0)
+
                     total_row = pd.DataFrame(display_df.sum(numeric_only=True)).T
                     total_row.index = ["Total"]
-                    total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100), 2) if total_row["Sales Total"].iloc[0] != 0 else 0
+                    total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100),0) if total_row["Sales Total"].iloc[0] !=0 else 0
                     billing_df = pd.concat([display_df, total_row])
 
-                    # colorful header + column band colors
+                    # Define column colors
                     col_to_color = {
-                        **{c: "background-color: #CCFFE6; color:#0F766E; font-weight:800" for c in ["Sales Group", "HHT", "Sales Total"]},
-                        **{c: "background-color: #FFE4CC; color:#9A3412; font-weight:800" for c in ["YKS1", "YKS2", "ZCAN", "Cancel Total"]},
-                        **{c: "background-color: #FFF2CC; color:#92400E; font-weight:800" for c in ["YKRE", "ZRE", "Return", "Return %"]}
+                        **{c: "background-color: #CCFFE6; color:#0F766E; font-weight:700" for c in ["Presales","HHT","Sales Total"]},
+                        **{c: "background-color: #FFE4CC; color:#9A3412; font-weight:700" for c in ["YKS1","YKS2","ZCAN","Cancel Total"]},
+                        **{c: "background-color: #FFF2CC; color:#92400E; font-weight:700" for c in ["YKRE","ZRE","Return","Return %"]}
                     }
-                    def highlight_columns(s):
+
+                    def highlight_columns_billing(s):
                         return [col_to_color.get(c, "") for c in s.index]
-                    def highlight_total_row(row):
-                        return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
+
+                    def highlight_total_row_billing(row):
+                        return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name=="Total" else '' for _ in row]
 
                     styled_billing = (
                         billing_df.style
-                        .set_table_styles(colorful_styles)
-                        .apply(highlight_columns, axis=1)
-                        .apply(highlight_total_row, axis=1)
-                        .format({
-                            "Sales Group": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
-                            "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
-                            "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.2f}%"
-                        })
+                        .set_table_styles([dict(selector='th', props=[('background','#1F2937'),('color','white'),('font-weight','800')])])
+                        .apply(highlight_columns_billing, axis=1)
+                        .apply(highlight_total_row_billing, axis=1)
+                        .format("{:,.0f}", subset=["Presales","HHT","Sales Total","YKS1","YKS2","ZCAN","Cancel Total","YKRE","ZRE","Return"])
+                        .format("{:.0f}%", subset=["Return %"])
                     )
                     st.dataframe(styled_billing, use_container_width=True)
                     st.download_button(
@@ -642,24 +666,42 @@ elif choice == "Sales Tracking":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
-                    # Sales by PY Name 1 with Contribution %
+                    # --- 3️⃣ Sales by PY Name 1 ---
                     st.subheader("🏬 Sales by PY Name 1")
                     py_table = df_filtered.groupby("PY Name 1")["Net Value"].sum().sort_values(ascending=False).to_frame(name="Sales")
-                    total_py_sales = float(py_table["Sales"].sum())
-                    py_table["Contribution %"] = np.where(total_py_sales != 0, (py_table["Sales"] / total_py_sales * 100).round(2), 0)
+                    py_table["Contribution %"] = np.where(py_table["Sales"]!=0, (py_table["Sales"]/py_table["Sales"].sum()*100).round(0),0)
+
+                    total_row = py_table.sum(numeric_only=True).to_frame().T
+                    total_row.index = ["Total"]
+                    py_table_with_total = pd.concat([py_table, total_row])
+
+                    col_to_color = {
+                        "Sales": "background-color: #CCFFE6; color:#0F766E; font-weight:700",
+                        "Contribution %": "background-color: #FFE4CC; color:#9A3412; font-weight:700"
+                    }
+
+                    def highlight_columns_py(s):
+                        return [col_to_color.get(c,"") for c in s.index]
+
+                    def highlight_total_row_py(row):
+                        return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name=="Total" else '' for _ in row]
+
                     styled_py = (
-                        py_table.style
-                        .set_table_styles(colorful_styles)
-                        .background_gradient(cmap="Blues", subset=["Sales"])
-                        .format({"Sales": "{:,.0f}", "Contribution %": "{:.2f}%"})
+                        py_table_with_total.style
+                        .set_table_styles([dict(selector='th', props=[('background','#1F2937'),('color','white'),('font-weight','800')])])
+                        .apply(highlight_columns_py, axis=1)
+                        .apply(highlight_total_row_py, axis=1)
+                        .format("{:,.0f}", subset=["Sales"])
+                        .format("{:.0f}%", subset=["Contribution %"])
                     )
                     st.dataframe(styled_py, use_container_width=True)
                     st.download_button(
                         "⬇️ Download PY Name Table (Excel)",
-                        data=to_excel_bytes(py_table.reset_index(), sheet_name="Sales_by_PY_Name"),
+                        data=to_excel_bytes(py_table_with_total.reset_index(), sheet_name="Sales_by_PY_Name"),
                         file_name=f"Sales_by_PY_Name_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
+
 
                 # --- CHARTS ---
                 with tabs[2]:
@@ -689,6 +731,77 @@ elif choice == "Sales Tracking":
                     fig_trend.update_layout(title="Daily Sales Trend & Forecast", xaxis_title="Date", yaxis_title="Net Value", font=dict(family="Roboto", size=12), plot_bgcolor="#F3F4F6", paper_bgcolor="#F3F4F6", hovermode="x unified")
                     st.plotly_chart(fig_trend, use_container_width=True)
 
+                    # --- Market vs E-com Pie Chart ---
+                    st.subheader("📊 Market vs E-com Sales")
+                    market_ecom_df = pd.DataFrame({
+                        "Channel": ["Market", "E-com"],
+                        "Sales": [total_retail_sales, total_ecom_sales]
+                    })
+                    fig_channel = px.pie(market_ecom_df, values="Sales", names="Channel",
+                                         title="Market vs E-com Sales Distribution",
+                                         hole=0.4, color_discrete_sequence=px.colors.sequential.Blues)
+                    fig_channel.update_traces(textposition='inside', textinfo='percent+label')
+                    fig_channel.update_layout(font=dict(family="Roboto", size=12), showlegend=True)
+                    st.plotly_chart(fig_channel, use_container_width=True)
+
+                    # --- Daily KA Target vs Actual Sales Trend ---
+                    st.subheader("📊 Daily KA Target vs Actual Sales")
+                    # df_time has daily Sales and Forecast. We'll show Actual Sales vs constant Daily Target.
+                    # Make sure dates sorted
+                    df_time = df_time.sort_values("Date").reset_index(drop=True)
+                    df_time["Daily KA Target"] = per_day_ka_target
+
+                    fig_target_trend = go.Figure()
+                    fig_target_trend.add_trace(go.Scatter(
+                        x=df_time["Date"], y=df_time["Sales"],
+                        mode='lines+markers', name="Actual Sales", line=dict(color='#16A34A', width=3)
+                    ))
+                    fig_target_trend.add_trace(go.Scatter(
+                        x=df_time["Date"], y=df_time["Daily KA Target"],
+                        mode='lines', name="Daily KA Target", line=dict(color='#F59E0B', width=2, dash='dot')
+                    ))
+                    fig_target_trend.update_layout(
+                        title="Daily KA Target vs Actual Sales",
+                        xaxis_title="Date", yaxis_title="Net Value",
+                        font=dict(family="Roboto", size=12),
+                        plot_bgcolor="#F3F4F6", paper_bgcolor="#F3F4F6",
+                        hovermode="x unified"
+                    )
+                    st.plotly_chart(fig_target_trend, use_container_width=True)
+
+                    # --- Salesman Actual vs Target (Grouped Bar) ---
+                    st.subheader("📊 Salesman KA Target vs Actual")
+                    # Build dataframe aligned
+                    salesman_target_df = pd.DataFrame({
+                        "Salesman": ka_targets.index,
+                        "KA Target": ka_targets.values,
+                        "KA Sales": total_sales.values
+                    }).reset_index(drop=True)
+
+                    fig_salesman_target = go.Figure()
+                    fig_salesman_target.add_trace(go.Bar(
+                        x=salesman_target_df["Salesman"],
+                        y=salesman_target_df["KA Target"],
+                        name="KA Target",
+                        marker_color="#F87171"
+                    ))
+                    fig_salesman_target.add_trace(go.Bar(
+                        x=salesman_target_df["Salesman"],
+                        y=salesman_target_df["KA Sales"],
+                        name="KA Sales",
+                        marker_color="#34D399"
+                    ))
+                    fig_salesman_target.update_layout(
+                        title="KA Target vs Actual Sales by Salesman",
+                        xaxis_title="Salesman",
+                        yaxis_title="Value",
+                        barmode="group",
+                        font=dict(family="Roboto", size=12),
+                        plot_bgcolor="#F3F4F6",
+                        paper_bgcolor="#F3F4F6"
+                    )
+                    st.plotly_chart(fig_salesman_target, use_container_width=True)
+
                     st.subheader("📊 Sales Breakdown by PY Name")
                     py_sales = df_filtered.groupby("PY Name 1")["Net Value"].sum().reset_index()
                     fig_py = px.pie(py_sales, values='Net Value', names='PY Name 1', title='Sales Distribution by PY Name', hole=0.4, color_discrete_sequence=px.colors.sequential.RdBu)
@@ -712,8 +825,16 @@ elif choice == "Sales Tracking":
                     else:
                         st.info("Not enough numeric columns for correlation heatmap.")
 
-                    figs_dict = {"Daily Sales Trend": fig_trend, "Sales by PY Name": fig_py, "Sales by Billing Type": fig_billing}
-                    if len(numeric_cols) > 1: figs_dict["Correlation Heatmap"] = fig_heatmap
+                    figs_dict = {
+                        "Daily Sales Trend": fig_trend,
+                        "Sales by PY Name": fig_py,
+                        "Sales by Billing Type": fig_billing,
+                        "Market vs E-com": fig_channel,
+                        "Daily KA Target Trend": fig_target_trend,
+                        "Salesman Target vs Actual": fig_salesman_target
+                    }
+                    if len(numeric_cols) > 1:
+                        figs_dict["Correlation Heatmap"] = fig_heatmap
 
                 # --- DOWNLOADS ---
                 with tabs[3]:
