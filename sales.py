@@ -657,38 +657,40 @@ elif choice == "Sales Tracking":
                     required_cols_raw = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
                     billing_wide = billing_wide.reindex(columns=required_cols_raw, fill_value=0)
                     display_df = billing_wide.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
-                    display_df["Sales Total"] = billing_wide["ZFR"] + billing_wide["YKF2"]
+                    display_df["Sales Total"] = billing_wide.sum(axis=1)
                     display_df["Return"] = billing_wide["YKRE"] + billing_wide["ZRE"]
+                    display_df["Return %"] = np.where(display_df["Sales Total"] != 0, (display_df["Return"] / display_df["Sales Total"] * 100).round(2), 0)
                     display_df["Cancel Total"] = billing_wide[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
-                    display_df["Return %"] = np.where(display_df["Sales Total"] != 0, (display_df["Return"] / display_df["Sales Total"] * 100).round(0), 0)
-
-                    ordered_cols = ["Presales", "HHT", "Sales Total","YKS1","YKS2","ZCAN","Cancel Total","YKRE","ZRE","Return","Return %"]
+                    ordered_cols = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN", "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
                     display_df = display_df.reindex(columns=ordered_cols, fill_value=0)
 
                     total_row = pd.DataFrame(display_df.sum(numeric_only=True)).T
                     total_row.index = ["Total"]
-                    total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100),0) if total_row["Sales Total"].iloc[0] !=0 else 0
+                    total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100), 2) if total_row["Sales Total"].iloc[0] != 0 else 0
                     billing_df = pd.concat([display_df, total_row])
 
                     col_to_color = {
-                        **{c: "background-color: #CCFFE6; color:#0F766E; font-weight:700" for c in ["Presales","HHT","Sales Total"]},
-                        **{c: "background-color: #FFE4CC; color:#9A3412; font-weight:700" for c in ["YKS1","YKS2","ZCAN","Cancel Total"]},
-                        **{c: "background-color: #FFF2CC; color:#92400E; font-weight:700" for c in ["YKRE","ZRE","Return","Return %"]}
+                        **{c: "background-color: #CCFFE6; color:#0F766E; font-weight:700" for c in ["Presales", "HHT", "Sales Total"]},
+                        **{c: "background-color: #FFE4CC; color:#9A3412; font-weight:700" for c in ["YKS1", "YKS2", "ZCAN", "Cancel Total"]},
+                        **{c: "background-color: #FFF2CC; color:#92400E; font-weight:700" for c in ["YKRE", "ZRE", "Return", "Return %"]}
                     }
 
                     def highlight_columns_billing(s):
                         return [col_to_color.get(c, "") for c in s.index]
 
                     def highlight_total_row_billing(row):
-                        return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name=="Total" else '' for _ in row]
+                        return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
 
                     styled_billing = (
                         billing_df.style
-                        .set_table_styles([dict(selector='th', props=[('background','#1F2937'),('color','white'),('font-weight','800')])])
+                        .set_table_styles([dict(selector='th', props=[('background','#1F2937'), ('color','white'), ('font-weight','800')])])
                         .apply(highlight_columns_billing, axis=1)
                         .apply(highlight_total_row_billing, axis=1)
-                        .format("{:,.0f}", subset=["Presales","HHT","Sales Total","YKS1","YKS2","ZCAN","Cancel Total","YKRE","ZRE","Return"])
-                        .format("{:.0f}%", subset=["Return %"])
+                        .format({
+                            "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
+                            "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
+                            "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.2f}%"
+                        })
                     )
                     st.dataframe(styled_billing, use_container_width=True)
                     st.download_button(
@@ -700,7 +702,7 @@ elif choice == "Sales Tracking":
 
                     st.subheader("🏬 Sales by PY Name 1")
                     py_table = df_filtered.groupby("PY Name 1")["Net Value"].sum().sort_values(ascending=False).to_frame(name="Sales")
-                    py_table["Contribution %"] = np.where(py_table["Sales"]!=0, (py_table["Sales"]/py_table["Sales"].sum()*100).round(0),0)
+                    py_table["Contribution %"] = np.where(py_table["Sales"] != 0, (py_table["Sales"]/py_table["Sales"].sum()*100).round(0), 0)
 
                     total_row = py_table.sum(numeric_only=True).to_frame().T
                     total_row.index = ["Total"]
@@ -712,14 +714,14 @@ elif choice == "Sales Tracking":
                     }
 
                     def highlight_columns_py(s):
-                        return [col_to_color.get(c,"") for c in s.index]
+                        return [col_to_color.get(c, "") for c in s.index]
 
                     def highlight_total_row_py(row):
-                        return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name=="Total" else '' for _ in row]
+                        return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
 
                     styled_py = (
                         py_table_with_total.style
-                        .set_table_styles([dict(selector='th', props=[('background','#1F2937'),('color','white'),('font-weight','800')])])
+                        .set_table_styles([dict(selector='th', props=[('background','#1F2937'), ('color','white'), ('font-weight','800')])])
                         .apply(highlight_columns_py, axis=1)
                         .apply(highlight_total_row_py, axis=1)
                         .format("{:,.0f}", subset=["Sales"])
