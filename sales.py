@@ -12,6 +12,9 @@ from sklearn.linear_model import LinearRegression
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import os
 from datetime import datetime
+from prophet import Prophet
+import io
+import base64
 
 # --- Custom CSS for Visual Enhancements ---
 st.markdown(
@@ -82,14 +85,17 @@ st.markdown(
 
     /* Metric card styling with pretty border */
     div[data-testid="stMetric"] {
-        border: 2px solid #38BDF8; /* cyan border */
+        border: 2px solid #38BDF8;
         border-radius: 14px;
         padding: 16px 14px;
         background: linear-gradient(180deg, #FFFFFF, #F0F9FF);
         box-shadow: 0 10px 20px rgba(56,189,248,0.25);
+        white-space: nowrap;
+        overflow: visible;
     }
     div[data-testid="stMetric"] > div {
         color: #0F172A !important;
+        font-size: 16px;
     }
 
     /* Dark mode */
@@ -107,6 +113,22 @@ st.markdown(
         opacity: 0; transition: opacity 0.3s;
     }
     .tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
+
+    .progress-bar {
+        background-color: #e0e0e0;
+        border-radius: 10px;
+        margin-top: 5px;
+    }
+    .progress-bar-fill {
+        background-color: #4CAF50;
+        height: 15px;
+        border-radius: 10px;
+        text-align: right;
+        padding-right: 5px;
+        color: white;
+        font-weight: bold;
+        transition: width 0.5s ease-in-out;
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -126,7 +148,6 @@ st.sidebar.checkbox(
     on_change=lambda: setattr(st.session_state, "dark_mode", not st.session_state.dark_mode)
 )
 
-# Apply dark mode class to body if enabled
 if st.session_state.dark_mode:
     st.markdown('<script>document.body.classList.add("dark-mode");</script>', unsafe_allow_html=True)
 else:
@@ -135,8 +156,6 @@ else:
 # --- Cache Data Loading ---
 @st.cache_data
 def load_data(file):
-    # Returns: sales_df, target_df, ytd_df, channels_df
-    # Normalizes 'PY Name 1' and 'Channels' to lower-case stripped values for reliable merging.
     with st.spinner("⏳ Loading Excel data..."):
         try:
             xls = pd.ExcelFile(file)
@@ -156,7 +175,6 @@ def load_data(file):
                 st.error(f"❌ Missing required columns: {set(required_cols) - set(sales_df.columns)}")
                 return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-            # Normalize key columns for reliable merging: strip and lower
             def normalize_series(s):
                 try:
                     return s.astype(str).str.strip().str.lower().replace({'nan': ''})
@@ -164,13 +182,11 @@ def load_data(file):
                     return s
 
             sales_df["Billing Date"] = pd.to_datetime(sales_df["Billing Date"], errors='coerce')
-            # Normalize PY Name 1 in sales_df
             if "PY Name 1" in sales_df.columns:
                 sales_df["_py_name_norm"] = normalize_series(sales_df["PY Name 1"])
             else:
                 sales_df["_py_name_norm"] = ""
 
-            # Normalize channels_df PY Name and Channels
             if "PY Name 1" in channels_df.columns:
                 channels_df["_py_name_norm"] = normalize_series(channels_df["PY Name 1"])
             else:
@@ -180,7 +196,6 @@ def load_data(file):
             else:
                 channels_df["_channels_norm"] = ""
 
-            # Also normalize in ytd_df if present
             if not ytd_df.empty and "Billing Date" in ytd_df.columns:
                 ytd_df["Billing Date"] = pd.to_datetime(ytd_df["Billing Date"], errors='coerce')
             if not ytd_df.empty and "PY Name 1" in ytd_df.columns:
@@ -211,7 +226,6 @@ def to_multi_sheet_excel_bytes(dfs, sheet_names) -> bytes:
 def create_pptx(report_df, billing_df, py_table, figs_dict, kpi_data):
     with st.spinner("⏳ Generating PPTX report..."):
         prs = Presentation()
-        # Title Slide
         slide_layout = prs.slide_layouts[0]
         slide = prs.slides.add_slide(slide_layout)
         title = slide.shapes.title
@@ -228,7 +242,6 @@ def create_pptx(report_df, billing_df, py_table, figs_dict, kpi_data):
         except Exception:
             pass
 
-        # KPI Slide
         slide_layout = prs.slide_layouts[5]
         slide = prs.slides.add_slide(slide_layout)
         slide.shapes.title.text = "📈 Key Performance Indicators"
@@ -266,7 +279,6 @@ def create_pptx(report_df, billing_df, py_table, figs_dict, kpi_data):
             slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = RGBColor(30, 58, 138)
             rows, cols = df.shape
             table = slide.shapes.add_table(rows + 1, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(4)).table
-            # headers
             for j, col in enumerate(df.columns):
                 cell = table.cell(0, j)
                 cell.text = str(col)
@@ -275,7 +287,6 @@ def create_pptx(report_df, billing_df, py_table, figs_dict, kpi_data):
                 cell.text_frame.paragraphs[0].font.bold = True
                 cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
                 cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(30, 58, 138)
-            # body
             for i, row in enumerate(df.itertuples(index=False), start=1):
                 for j, val in enumerate(row):
                     cell = table.cell(i, j)
@@ -320,6 +331,17 @@ def color_positive_negative(val):
     except:
         return ""
 
+def create_progress_bar_html(percentage):
+    safe_pct = max(0, min(100, percentage))
+    fill_color = "#4CAF50" if safe_pct >= 100 else "#2196F3"
+    html = f"""
+    <div style="background-color: #f0f0f0; border-radius: 5px; height: 10px; margin-top: 5px;">
+        <div style="background-color: {fill_color}; height: 100%; width: {safe_pct}%; border-radius: 5px; text-align: right; font-size: 8px; color: white;">
+        </div>
+    </div>
+    """
+    return html
+
 # --- SINGLE SIDEBAR UPLOADER ---
 st.sidebar.header("📂 Upload Excel (one-time)")
 st.sidebar.markdown('<div class="tooltip">ℹ️<span class="tooltiptext">Upload an Excel file with sheets: sales data, Target, sales channels, and optionally YTD.</span></div>', unsafe_allow_html=True)
@@ -350,7 +372,7 @@ if choice == "Home":
         st.markdown(
             """
             **Welcome to your Sales Analytics Hub!**
-            - 📈 Track sales & targets by salesman, PY Name, and SP Name
+            - 📈 Track sales & targets by salesman, By Customer Name, By Branch Name
             - 📊 Visualize trends with interactive charts (now with advanced forecasting)
             - 💾 Download reports in PPTX & Excel
             - 📅 Compare sales across custom periods
@@ -364,7 +386,7 @@ if choice == "Home":
 
 # --- Sales Tracking Page ---
 elif choice == "Sales Tracking":
-    st.title("📊 MTD Tracking ")
+    st.title("📊 MTD Tracking")
     if "data_loaded" not in st.session_state:
         st.warning("⚠️ Please upload the Excel file in the sidebar (one-time).")
     else:
@@ -485,80 +507,93 @@ elif choice == "Sales Tracking":
                 forecast_month_end_ka = current_sales_per_day * working_days_current_month
 
                 # --- Channels mapping: Market (Retail) vs E-com ---
-                # Step 1: Aggregate sales by normalized PY Name 1 to get a single value per PY
                 df_py_sales = df_filtered.groupby("_py_name_norm")["Net Value"].sum().reset_index()
-
-                # Step 2: Merge the aggregated sales with the channels dataframe on the normalized column
                 df_channels_merged = df_py_sales.merge(
                     channels_df[["_py_name_norm", "Channels"]],
                     on="_py_name_norm",
                     how="left"
                 )
-
-                # Normalize the 'Channels' column to ensure correct grouping, and fill NaNs with a new category
                 df_channels_merged["Channels"] = df_channels_merged["Channels"].str.strip().str.lower().fillna("uncategorized")
-
-                # Step 3: Group by channel and calculate the total sales
                 channel_sales = df_channels_merged.groupby("Channels")["Net Value"].sum()
-
-                # Update logic to combine 'market' and 'uncategorized' into a single 'retail' total
                 total_retail_sales = float(channel_sales.get("market", 0.0) + channel_sales.get("uncategorized", 0.0))
                 total_ecom_sales = float(channel_sales.get("e-com", 0.0))
                 total_channel_sales = total_retail_sales + total_ecom_sales
                 retail_sales_pct = (total_retail_sales / total_channel_sales * 100) if total_channel_sales > 0 else 0
                 ecom_sales_pct = (total_ecom_sales / total_channel_sales * 100) if total_channel_sales > 0 else 0
 
+                # --- KA & Other E-com Calculation ---
+                ka_other_ecom_sales = total_sales.sum() - talabat_sales.sum()
+                ka_other_ecom_pct = (ka_other_ecom_sales / total_ka_target_all * 100) if total_ka_target_all > 0 else 0
+
                 # --- KPI Data for PPTX ---
                 kpi_data = {
-                    "KA Target": f"{total_ka_target_all:,.0f}",
-                    "Talabat Target": f"{total_tal_target_all:,.0f}",
-                    "Total KA Sales": f"{total_sales.sum():,.0f} ({((total_sales.sum() / total_ka_target_all) * 100):.2f}%)" if total_ka_target_all else f"{total_sales.sum():,.0f} (0.00%)",
-                    "Total Talabat Sales": f"{talabat_sales.sum():,.0f} ({((talabat_sales.sum() / total_tal_target_all) * 100):.2f}%)" if total_tal_target_all else f"{talabat_sales.sum():,.0f} (0.00%)",
-                    "KA Gap": f"{(total_ka_target_all - total_sales.sum()):,.0f}" if total_ka_target_all else "0",
-                    "Total Talabat Gap": f"{talabat_gap.sum():,.0f}" if total_tal_target_all else "0",
-                    "Market Sales": f"{total_retail_sales:,.0f} ({retail_sales_pct:.2f}%)",
-                    "E-com Sales": f"{total_ecom_sales:,.0f} ({ecom_sales_pct:.2f}%)",
+                    "KA Target": f"KD {total_ka_target_all:,.2f}",
+                    "Talabat Target": f"KD {total_tal_target_all:,.2f}",
+                    "KA Gap": f"KD {(total_ka_target_all - total_sales.sum()):,.2f}",
+                    "Total Talabat Gap": f"KD {talabat_gap.sum():,.2f}",
+                    "Total KA Sales": f"KD {total_sales.sum():,.2f} ({((total_sales.sum() / total_ka_target_all) * 100):.2f}%)" if total_ka_target_all else f"KD {total_sales.sum():,.2f} (0.00%)",
+                    "Total Talabat Sales": f"KD {talabat_sales.sum():,.2f} ({((talabat_sales.sum() / total_tal_target_all) * 100):.2f}%)" if total_tal_target_all else f"KD {talabat_sales.sum():,.2f} (0.00%)",
+                    "KA & Other E-com": f"KD {ka_other_ecom_sales:,.2f} ({ka_other_ecom_pct:.2f}%)",
+                    "Market Sales": f"KD {total_retail_sales:,.2f} ({retail_sales_pct:.2f}%)",
+                    "E-com Sales": f"KD {total_ecom_sales:,.2f} ({ecom_sales_pct:.2f}%)",
                     "Days Finished (working)": f"{days_finish}",
-                    "Per Day KA Target": f"{per_day_ka_target:,.0f}",
-                    "Current Sales Per Day": f"{current_sales_per_day:,.0f}",
-                    "Forecasted Month-End KA Sales": f"{forecast_month_end_ka:,.0f}"
+                    "Per Day KA Target": f"KD {per_day_ka_target:,.2f}",
+                    "Current Sales Per Day": f"KD {current_sales_per_day:,.2f}",
+                    "Forecasted Month-End KA Sales": f"KD {forecast_month_end_ka:,.2f}"
                 }
 
                 tabs = st.tabs(["📈 KPIs", "📋 Tables", "📊 Charts", "💾 Downloads"])
 
-                # --- KPIs ---
+                # --- KPIs with progress bars ---
                 with tabs[0]:
                     st.subheader("🏆 Key Metrics")
-                    # Row 1: Targets
-                    r1c1, r1c2 = st.columns(2)
-                    r1c1.metric("KA Target", f"{total_ka_target_all:,.0f}")
-                    r1c2.metric("Talabat Target", f"{total_tal_target_all:,.0f}")
-                    # Row 2: Total Sales and Gap
-                    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-                    r2c1.metric("Total KA Sales", f"{total_sales.sum():,.0f}", f"{((total_sales.sum() / total_ka_target_all) * 100):.2f}%" if total_ka_target_all else "0.00%")
-                    r2c2.metric("Total Talabat Sales", f"{talabat_sales.sum():,.0f}", f"{((talabat_sales.sum() / total_tal_target_all) * 100):.2f}%" if total_tal_target_all else "0.00%")
-                    r2c3.metric("KA Gap", f"{(total_ka_target_all - total_sales.sum()):,.0f}")
-                    r2c4.metric("Total Talabat Gap", f"{talabat_gap.sum():,.0f}", f"{(talabat_gap.sum() / total_tal_target_all * 100):.2f}%" if total_tal_target_all else "0.00%")
-                    # Row 3: Days and Forecast
-                    r3c1, r3c2 = st.columns(2)
-                    r3c1.metric("📅 Days Finished (working)", days_finish)
-                    r3c2.metric("🎯 Per Day KA Target", f"{per_day_ka_target:,.0f}")
-                    # Row 4: Market Sales and E-com Sales with Percentages
+                    r1c1 = st.columns(1)[0]
+                    with r1c1:
+                        st.metric("Total KA Sales", f"KD {total_sales.sum():,.2f}")
+                        progress_pct_ka = (total_sales.sum() / total_ka_target_all * 100) if total_ka_target_all > 0 else 0
+                        st.markdown(create_progress_bar_html(progress_pct_ka), unsafe_allow_html=True)
+                        st.caption(f"{progress_pct_ka:.2f}% of KA Target Achieved")
+
+                    r2c1, r2c2 = st.columns(2)
+                    with r2c1:
+                        st.metric("KA & Other E-com", f"KD {ka_other_ecom_sales:,.2f}")
+                        st.markdown(create_progress_bar_html(ka_other_ecom_pct), unsafe_allow_html=True)
+                        st.caption(f"{ka_other_ecom_pct:.2f}% of KA Target")
+                    with r2c2:
+                        st.metric("Total Talabat Sales", f"KD {talabat_sales.sum():,.2f}")
+                        progress_pct_talabat = (talabat_sales.sum() / total_tal_target_all * 100) if total_tal_target_all > 0 else 0
+                        st.markdown(create_progress_bar_html(progress_pct_talabat), unsafe_allow_html=True)
+                        st.caption(f"{progress_pct_talabat:.2f}% of Talabat Target Achieved")
+
+                    st.subheader("🎯 Target Overview")
+                    r3c1, r3c2, r3c3, r3c4 = st.columns(4)
+                    r3c1.metric("KA Target", f"KD {total_ka_target_all:,.2f}")
+                    r3c2.metric("Talabat Target", f"KD {total_tal_target_all:,.2f}")
+                    r3c3.metric("KA Gap", f"KD {(total_ka_target_all - total_sales.sum()):,.2f}")
+                    r3c4.metric("Total Talabat Gap", f"KD {talabat_gap.sum():,.2f}")
+
+                    st.subheader("📊 Channel Sales")
                     r4c1, r4c2 = st.columns(2)
-                    r4c1.metric("🛒 Market Sales", f"{total_retail_sales:,.0f}", f"{retail_sales_pct:.2f}%")
-                    r4c2.metric("💻 E-com Sales", f"{total_ecom_sales:,.0f}", f"{ecom_sales_pct:.2f}%")
-                    # Row 5: Current Sales and Forecast
-                    r5c1, r5c2 = st.columns(2)
-                    r5c1.metric("📈 Current Sales Per Day", f"{current_sales_per_day:,.0f}")
-                    r5c2.metric("🔮 Forecasted Month-End KA Sales", f"{forecast_month_end_ka:,.0f}")
+                    with r4c1:
+                        st.metric("Market Sales", f"KD {total_retail_sales:,.2f}")
+                        retail_contribution_pct = (total_retail_sales / total_sales.sum() * 100) if total_sales.sum() > 0 else 0
+                        st.caption(f"{retail_contribution_pct:.2f}% of Total KA Sales")
+                    with r4c2:
+                        st.metric("E-com Sales", f"KD {total_ecom_sales:,.2f}")
+                        ecom_contribution_pct = (total_ecom_sales / total_sales.sum() * 100) if total_sales.sum() > 0 else 0
+                        st.caption(f"{ecom_contribution_pct:.2f}% of Total KA Sales")
+
+                    st.subheader("📈 Performance Metrics")
+                    r5c1, r5c2, r5c3 = st.columns(3)
+                    r5c1.metric("Days Finished (working)", days_finish)
+                    r5c2.metric("Current Sales Per Day", f"KD {current_sales_per_day:,.2f}")
+                    r5c3.metric("Forecasted Month-End KA Sales", f"KD {forecast_month_end_ka:,.2f}")
 
                 # --- TABLES ---
                 with tabs[1]:
-
-                    # --- 1️⃣ Sales & Targets Summary ---
                     st.subheader("📋 Sales & Targets Summary")
                     report_df = pd.DataFrame({
-                        "Salesman": ka_targets.index,  # Only once
+                        "Salesman": ka_targets.index,
                         "KA Target": ka_targets.values,
                         "KA Sales": total_sales.values,
                         "KA Remaining": ka_gap.values,
@@ -569,7 +604,6 @@ elif choice == "Sales Tracking":
                         "Talabat % Achieved": np.where(talabat_targets.values != 0, (talabat_sales.values / talabat_targets.values * 100).round(0), 0)
                     })
 
-                    # Total row
                     total_row = report_df.sum(numeric_only=True).to_frame().T
                     total_row.index = ["Total"]
                     total_row["KA % Achieved"] = round(total_row["KA Sales"]/total_row["KA Target"]*100,0) if total_row["KA Target"].iloc[0]!=0 else 0
@@ -611,7 +645,6 @@ elif choice == "Sales Tracking":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
-                    # --- 2️⃣ Billing Type Table ---
                     st.subheader("📊 Sales by Billing Type per Salesman")
                     billing_wide = df_filtered.pivot_table(
                         index="Driver Name EN",
@@ -637,7 +670,6 @@ elif choice == "Sales Tracking":
                     total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100),0) if total_row["Sales Total"].iloc[0] !=0 else 0
                     billing_df = pd.concat([display_df, total_row])
 
-                    # Define column colors
                     col_to_color = {
                         **{c: "background-color: #CCFFE6; color:#0F766E; font-weight:700" for c in ["Presales","HHT","Sales Total"]},
                         **{c: "background-color: #FFE4CC; color:#9A3412; font-weight:700" for c in ["YKS1","YKS2","ZCAN","Cancel Total"]},
@@ -666,7 +698,6 @@ elif choice == "Sales Tracking":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
-                    # --- 3️⃣ Sales by PY Name 1 ---
                     st.subheader("🏬 Sales by PY Name 1")
                     py_table = df_filtered.groupby("PY Name 1")["Net Value"].sum().sort_values(ascending=False).to_frame(name="Sales")
                     py_table["Contribution %"] = np.where(py_table["Sales"]!=0, (py_table["Sales"]/py_table["Sales"].sum()*100).round(0),0)
@@ -702,76 +733,91 @@ elif choice == "Sales Tracking":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
-
                 # --- CHARTS ---
                 with tabs[2]:
-                    st.subheader("📊 Sales Trend with Forecast")
+                    st.subheader("📊 Daily Sales Trend with Prophet Forecast")
                     df_time = df_filtered.groupby(pd.Grouper(key="Billing Date", freq="D"))["Net Value"].sum().reset_index()
-                    df_time.rename(columns={"Billing Date": "Date", "Net Value": "Sales"}, inplace=True)
-
-                    forecast_method = st.selectbox("Select Forecast Method", ["Linear Regression", "Exponential Smoothing"], key="forecast_method")
+                    df_time.rename(columns={"Billing Date": "ds", "Net Value": "y"}, inplace=True)
+                    
                     if len(df_time) > 1:
-                        if forecast_method == "Linear Regression":
-                            model = LinearRegression(); X = np.arange(len(df_time)).reshape(-1, 1); y = df_time["Sales"].values
-                            model.fit(X, y); df_time["Forecast"] = model.predict(X)
-                        else:
-                            try:
-                                model = ExponentialSmoothing(df_time["Sales"], trend="add", seasonal=None)
-                                fitted_model = model.fit(); df_time["Forecast"] = fitted_model.fittedvalues
-                            except:
-                                st.warning("⚠️ Exponential Smoothing failed. Falling back to Linear Regression.")
-                                model = LinearRegression(); X = np.arange(len(df_time)).reshape(-1, 1); y = df_time["Sales"].values
-                                model.fit(X, y); df_time["Forecast"] = model.predict(X)
+                        m = Prophet()
+                        m.fit(df_time)
+                        future = m.make_future_dataframe(periods=30)
+                        forecast = m.predict(future)
+                        
+                        fig_trend = go.Figure()
+                        fig_trend.add_trace(go.Scatter(x=df_time["ds"], y=df_time["y"], mode='lines+markers', name='Actual Sales', line=dict(color='#1E3A8A', width=3)))
+                        fig_trend.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat"], mode='lines', name='Prophet Forecast', line=dict(color='#3B82F6', width=2, dash='dash')))
+                        
+                        df_time['y_mean'] = df_time['y'].rolling(window=7).mean()
+                        df_time['y_std'] = df_time['y'].rolling(window=7).std()
+                        df_time['upper_bound'] = df_time['y_mean'] + 2 * df_time['y_std']
+                        df_time['lower_bound'] = df_time['y_mean'] - 2 * df_time['y_std']
+                        df_time['anomaly'] = np.where((df_time['y'] > df_time['upper_bound']) | (df_time['y'] < df_time['lower_bound']), df_time['y'], np.nan)
+                        
+                        fig_trend.add_trace(go.Scatter(
+                            x=df_time['ds'], y=df_time['anomaly'],
+                            mode='markers', name='Anomaly',
+                            marker=dict(color='red', size=10, symbol='x')
+                        ))
+                        
+                        fig_trend.update_layout(
+                            title="Daily Sales Trend, Prophet Forecast & Anomalies",
+                            xaxis_title="Date",
+                            yaxis_title="Net Value (KD)",
+                            font=dict(family="Roboto", size=12),
+                            plot_bgcolor="#F3F4F6",
+                            paper_bgcolor="#F3F4F6",
+                            hovermode="x unified"
+                        )
+                        st.plotly_chart(fig_trend, use_container_width=True)
                     else:
-                        df_time["Forecast"] = df_time["Sales"]
-
-                    fig_trend = go.Figure()
-                    fig_trend.add_trace(go.Scatter(x=df_time["Date"], y=df_time["Sales"], mode='lines+markers', name='Actual Sales', line=dict(color='#1E3A8A', width=3)))
-                    fig_trend.add_trace(go.Scatter(x=df_time["Date"], y=df_time["Forecast"], mode='lines', name=f'{forecast_method} Forecast', line=dict(color='#3B82F6', width=2, dash='dash')))
-                    fig_trend.update_layout(title="Daily Sales Trend & Forecast", xaxis_title="Date", yaxis_title="Net Value", font=dict(family="Roboto", size=12), plot_bgcolor="#F3F4F6", paper_bgcolor="#F3F4F6", hovermode="x unified")
-                    st.plotly_chart(fig_trend, use_container_width=True)
-
-                    # --- Market vs E-com Pie Chart ---
+                        st.info("Not enough data to perform a time-series forecast.")
+                        
                     st.subheader("📊 Market vs E-com Sales")
                     market_ecom_df = pd.DataFrame({
-                        "Channel": ["Market", "E-com"],
+                        "Channel": ["Market (In-Store & Other)", "E-com (Talabat)"],
                         "Sales": [total_retail_sales, total_ecom_sales]
                     })
-                    fig_channel = px.pie(market_ecom_df, values="Sales", names="Channel",
-                                         title="Market vs E-com Sales Distribution",
-                                         hole=0.4, color_discrete_sequence=px.colors.sequential.Blues)
+                    fig_channel = px.pie(
+                        market_ecom_df,
+                        values="Sales",
+                        names="Channel",
+                        title="Market vs E-com Sales Distribution",
+                        hole=0.4,
+                        color_discrete_sequence=px.colors.sequential.Blues
+                    )
                     fig_channel.update_traces(textposition='inside', textinfo='percent+label')
                     fig_channel.update_layout(font=dict(family="Roboto", size=12), showlegend=True)
                     st.plotly_chart(fig_channel, use_container_width=True)
 
-                    # --- Daily KA Target vs Actual Sales Trend ---
                     st.subheader("📊 Daily KA Target vs Actual Sales")
-                    # df_time has daily Sales and Forecast. We'll show Actual Sales vs constant Daily Target.
-                    # Make sure dates sorted
-                    df_time = df_time.sort_values("Date").reset_index(drop=True)
-                    df_time["Daily KA Target"] = per_day_ka_target
+                    df_time_target = df_filtered.groupby(pd.Grouper(key="Billing Date", freq="D"))["Net Value"].sum().reset_index()
+                    df_time_target.rename(columns={"Billing Date": "Date", "Net Value": "Sales"}, inplace=True)
+                    df_time_target = df_time_target.sort_values("Date").reset_index(drop=True)
+                    df_time_target["Daily KA Target"] = per_day_ka_target
 
                     fig_target_trend = go.Figure()
                     fig_target_trend.add_trace(go.Scatter(
-                        x=df_time["Date"], y=df_time["Sales"],
+                        x=df_time_target["Date"], y=df_time_target["Sales"],
                         mode='lines+markers', name="Actual Sales", line=dict(color='#16A34A', width=3)
                     ))
                     fig_target_trend.add_trace(go.Scatter(
-                        x=df_time["Date"], y=df_time["Daily KA Target"],
+                        x=df_time_target["Date"], y=df_time_target["Daily KA Target"],
                         mode='lines', name="Daily KA Target", line=dict(color='#F59E0B', width=2, dash='dot')
                     ))
                     fig_target_trend.update_layout(
                         title="Daily KA Target vs Actual Sales",
-                        xaxis_title="Date", yaxis_title="Net Value",
+                        xaxis_title="Date",
+                        yaxis_title="Net Value (KD)",
                         font=dict(family="Roboto", size=12),
-                        plot_bgcolor="#F3F4F6", paper_bgcolor="#F3F4F6",
+                        plot_bgcolor="#F3F4F6",
+                        paper_bgcolor="#F3F4F6",
                         hovermode="x unified"
                     )
                     st.plotly_chart(fig_target_trend, use_container_width=True)
 
-                    # --- Salesman Actual vs Target (Grouped Bar) ---
                     st.subheader("📊 Salesman KA Target vs Actual")
-                    # Build dataframe aligned
                     salesman_target_df = pd.DataFrame({
                         "Salesman": ka_targets.index,
                         "KA Target": ka_targets.values,
@@ -794,7 +840,7 @@ elif choice == "Sales Tracking":
                     fig_salesman_target.update_layout(
                         title="KA Target vs Actual Sales by Salesman",
                         xaxis_title="Salesman",
-                        yaxis_title="Value",
+                        yaxis_title="Value (KD)",
                         barmode="group",
                         font=dict(family="Roboto", size=12),
                         plot_bgcolor="#F3F4F6",
@@ -804,35 +850,72 @@ elif choice == "Sales Tracking":
 
                     st.subheader("📊 Sales Breakdown by PY Name")
                     py_sales = df_filtered.groupby("PY Name 1")["Net Value"].sum().reset_index()
-                    fig_py = px.pie(py_sales, values='Net Value', names='PY Name 1', title='Sales Distribution by PY Name', hole=0.4, color_discrete_sequence=px.colors.sequential.RdBu)
+                    fig_py = px.pie(
+                        py_sales,
+                        values='Net Value',
+                        names='PY Name 1',
+                        title='Sales Distribution by PY Name',
+                        hole=0.4,
+                        color_discrete_sequence=px.colors.sequential.RdBu
+                    )
                     fig_py.update_traces(textposition='inside', textinfo='percent+label')
                     fig_py.update_layout(font=dict(family="Roboto", size=12), showlegend=True)
                     st.plotly_chart(fig_py, use_container_width=True)
 
                     st.subheader("📊 Sales by Billing Type (Stacked Bar)")
-                    billing_sales = df_filtered.pivot_table(index="Driver Name EN", columns="Billing Type", values="Net Value", aggfunc="sum", fill_value=0).reset_index()
-                    fig_billing = px.bar(billing_sales, x="Driver Name EN", y=billing_sales.columns[1:], title="Sales by Billing Type per Salesman", color_discrete_sequence=px.colors.qualitative.Plotly)
-                    fig_billing.update_layout(font=dict(family="Roboto", size=12), xaxis_title="Salesman", yaxis_title="Net Value", barmode="stack", plot_bgcolor="#F3F4F6", paper_bgcolor="#F3F4F6")
+                    billing_sales = df_filtered.pivot_table(
+                        index="Driver Name EN",
+                        columns="Billing Type",
+                        values="Net Value",
+                        aggfunc="sum",
+                        fill_value=0
+                    ).reset_index()
+                    fig_billing = px.bar(
+                        billing_sales,
+                        x="Driver Name EN",
+                        y=billing_sales.columns[1:],
+                        title="Sales by Billing Type per Salesman",
+                        color_discrete_sequence=px.colors.qualitative.Plotly
+                    )
+                    fig_billing.update_layout(
+                        font=dict(family="Roboto", size=12),
+                        xaxis_title="Salesman",
+                        yaxis_title="Net Value (KD)",
+                        barmode="stack",
+                        plot_bgcolor="#F3F4F6",
+                        paper_bgcolor="#F3F4F6"
+                    )
                     st.plotly_chart(fig_billing, use_container_width=True)
 
                     st.subheader("📊 Sales Correlation Heatmap")
                     numeric_cols = df_filtered.select_dtypes(include=[np.number]).columns
                     if len(numeric_cols) > 1:
                         corr_matrix = df_filtered[numeric_cols].corr()
-                        fig_heatmap = px.imshow(corr_matrix, text_auto=True, title="Correlation Matrix of Numeric Columns", color_continuous_scale="RdBu", aspect="equal")
-                        fig_heatmap.update_layout(font=dict(family="Roboto", size=12), plot_bgcolor="#F3F4F6", paper_bgcolor="#F3F4F6")
+                        fig_heatmap = px.imshow(
+                            corr_matrix,
+                            text_auto=True,
+                            title="Correlation Matrix of Numeric Columns",
+                            color_continuous_scale="RdBu",
+                            aspect="equal"
+                        )
+                        fig_heatmap.update_layout(
+                            font=dict(family="Roboto", size=12),
+                            plot_bgcolor="#F3F4F6",
+                            paper_bgcolor="#F3F4F6"
+                        )
                         st.plotly_chart(fig_heatmap, use_container_width=True)
                     else:
                         st.info("Not enough numeric columns for correlation heatmap.")
 
                     figs_dict = {
-                        "Daily Sales Trend": fig_trend,
                         "Sales by PY Name": fig_py,
                         "Sales by Billing Type": fig_billing,
                         "Market vs E-com": fig_channel,
                         "Daily KA Target Trend": fig_target_trend,
                         "Salesman Target vs Actual": fig_salesman_target
                     }
+                    if len(df_time) > 1:
+                        figs_dict["Daily Sales Trend"] = fig_trend
                     if len(numeric_cols) > 1:
                         figs_dict["Correlation Heatmap"] = fig_heatmap
 
@@ -895,9 +978,15 @@ elif choice == "Year to Date Comparison":
             ytd_comparison.rename(columns={dimension: "Name"}, inplace=True)
 
             st.subheader(f"📋 Comparison by {dimension}")
-            st.dataframe(ytd_comparison.style.format({"First Period Value": "{:,.2f}", "2nd Period Value": "{:,.2f}", "Difference": "{:,.2f}"}), use_container_width=True)
+            st.dataframe(
+                ytd_comparison.style.format({
+                    "First Period Value": "{:,.2f}",
+                    "2nd Period Value": "{:,.2f}",
+                    "Difference": "{:,.2f}"
+                }),
+                use_container_width=True
+            )
 
-            # Excel download for YTD comparison
             st.download_button(
                 "⬇️ Download YTD Comparison (Excel)",
                 data=to_excel_bytes(ytd_comparison, sheet_name="YTD_Comparison", index=False),
@@ -925,8 +1014,19 @@ elif choice == "Custom Analysis":
                     analysis_df = sales_df.groupby(group_col)[value_col].sum().reset_index()
                     st.subheader(f"Analysis of {value_col} by {group_col}")
                     st.dataframe(analysis_df.style.format({value_col: "{:,.2f}"}), use_container_width=True)
-                    fig = px.bar(analysis_df.sort_values(by=value_col, ascending=False), x=group_col, y=value_col, title=f"Total {value_col} by {group_col}", color=group_col, color_discrete_sequence=px.colors.qualitative.Plotly)
-                    fig.update_layout(font=dict(family="Roboto", size=12), plot_bgcolor="#F3F4F6", paper_bgcolor="#F3F4F6")
+                    fig = px.bar(
+                        analysis_df.sort_values(by=value_col, ascending=False),
+                        x=group_col,
+                        y=value_col,
+                        title=f"Total {value_col} by {group_col}",
+                        color=group_col,
+                        color_discrete_sequence=px.colors.qualitative.Plotly
+                    )
+                    fig.update_layout(
+                        font=dict(family="Roboto", size=12),
+                        plot_bgcolor="#F3F4F6",
+                        paper_bgcolor="#F3F4F6"
+                    )
                     st.plotly_chart(fig, use_container_width=True)
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
@@ -953,13 +1053,13 @@ elif choice == "SP/PY Target Allocation":
 
     total_target = 0
     if target_option == "Manual":
-        total_target = st.number_input("Enter the Total Target to be Allocated for this Month", min_value=0, value=1000000, step=1000)
+        total_target = st.number_input("Enter the Total Target to be Allocated for this Month (KD)", min_value=0, value=1000000, step=1000)
     else:
         if target_df.empty or "KA Target" not in target_df.columns:
             st.error("❌ 'Target' sheet or 'KA Target' column not found. Please upload a file with this sheet for 'Auto' mode.")
             st.stop()
         total_target = target_df["KA Target"].sum()
-        st.info(f"Using Total Target from 'Target' sheet: KD {total_target:,.0f}")
+        st.info(f"Using Total Target from 'Target' sheet: KD {total_target:,.2f}")
 
     if total_target <= 0:
         st.warning("Please ensure the total target is greater than 0.")
@@ -1003,18 +1103,18 @@ elif choice == "SP/PY Target Allocation":
         st.subheader("🎯 Target Analysis")
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
-        with col1: st.metric("Historical Sales Total", f"KD {total_historical_sales_value:,.0f}")
-        with col2: st.metric("Allocated Target Total", f"KD {total_target:,.0f}")
+        with col1: st.metric("Historical Sales Total", f"KD {total_historical_sales_value:,.2f}")
+        with col2: st.metric("Allocated Target Total", f"KD {total_target:,.2f}")
         with col3:
             if average_historical_sales > 0:
                 percentage_increase_needed = ((total_target - average_historical_sales) / average_historical_sales) * 100
                 delta_value = total_target - average_historical_sales
-                st.metric("Increase Needed vs Avg Sales", f"{percentage_increase_needed:.2f}%", delta=f"KD {delta_value:,.0f}")
+                st.metric("Increase Needed vs Avg Sales", f"{percentage_increase_needed:.2f}%", delta=f"KD {delta_value:,.2f}")
             else:
                 st.metric("Increase Needed vs Avg Sales", "N/A", delta="Historical = 0")
         st.markdown("---")
-        with col4: st.metric("Current Month Sales", f"KD {total_current_month_sales:,.0f}")
-        with col5: st.metric("Target Balance", f"KD {target_balance:,.0f}")
+        with col4: st.metric("Current Month Sales", f"KD {total_current_month_sales:,.2f}")
+        with col5: st.metric("Target Balance", f"KD {target_balance:,.2f}")
 
     allocation_table = pd.DataFrame(index=historical_sales.index.union(current_month_sales.index).unique())
     allocation_table.index.name = "Name"
