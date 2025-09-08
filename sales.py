@@ -787,7 +787,7 @@ elif choice == "Sales Tracking":
                         names="Channel",
                         title="Market vs E-com Sales Distribution",
                         hole=0.4,
-                        color_discrete_sequence=px.colors.sequential.Blues
+                        color_discrete_sequence=px.colors.sequential.Oranges
                     )
                     fig_channel.update_traces(textposition='inside', textinfo='percent+label')
                     fig_channel.update_layout(font=dict(family="Roboto", size=12), showlegend=True)
@@ -998,42 +998,103 @@ elif choice == "Year to Date Comparison":
     else:
         st.warning("⚠️ Please ensure the 'YTD' sheet is present in your uploaded file.")
 
-# --- Custom Analysis Page ---
 elif choice == "Custom Analysis":
     st.title("🔍 Custom Analysis")
     if "data_loaded" not in st.session_state:
         st.warning("⚠️ Please upload the Excel file in the sidebar (one-time).")
     else:
-        sales_df = st.session_state["sales_df"]
-        st.subheader("💡 Explore your data by any column.")
-        st.markdown('<div class="tooltip">ℹ️<span class="tooltiptext">Group data by any column and analyze a value column.</span></div>', unsafe_allow_html=True)
-        available_cols = list(sales_df.columns)
-        group_col = st.selectbox("Group by (e.g., 'PY Name 1')", available_cols)
-        value_col = st.selectbox("Value to analyze (e.g., 'Net Value')", available_cols)
-        if st.button("Generate Analysis"):
-            if group_col and value_col:
-                try:
-                    analysis_df = sales_df.groupby(group_col)[value_col].sum().reset_index()
-                    st.subheader(f"Analysis of {value_col} by {group_col}")
-                    st.dataframe(analysis_df.style.format({value_col: "{:,.2f}"}), use_container_width=True)
-                    fig = px.bar(
-                        analysis_df.sort_values(by=value_col, ascending=False),
-                        x=group_col,
-                        y=value_col,
-                        title=f"Total {value_col} by {group_col}",
-                        color=group_col,
-                        color_discrete_sequence=px.colors.qualitative.Plotly
+        # Allow user to choose which sheet to analyze
+        sheet_options = {
+            "Sales Data": st.session_state.get("sales_df", pd.DataFrame()),
+            "YTD": st.session_state.get("ytd_df", pd.DataFrame()),
+            "Target": st.session_state.get("target_df", pd.DataFrame()),
+            "Sales Channels": st.session_state.get("channels_df", pd.DataFrame())
+        }
+        selected_sheet_name = st.selectbox("📑 Select Sheet for Analysis", list(sheet_options.keys()))
+        df = sheet_options[selected_sheet_name]
+
+        if df.empty:
+            st.warning(f"⚠️ The sheet '{selected_sheet_name}' is empty or not available in your file.")
+        else:
+            st.subheader("💡 Explore your data by multiple columns & compare two periods.")
+
+            available_cols = list(df.columns)
+
+            # Multiple group by columns
+            group_cols = st.multiselect("Group by columns", available_cols)
+
+            # Value column to analyze
+            value_col = st.selectbox("Value to analyze", available_cols)
+
+            # Select two periods (only if Billing Date exists)
+            if "Billing Date" in df.columns:
+                st.subheader("📆 Select Two Periods")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("Period 1")
+                    period1_range = st.date_input(
+                        "Select Period 1",
+                        value=(df["Billing Date"].min(), df["Billing Date"].max()),
+                        key="ca_p1_range"
                     )
-                    fig.update_layout(
-                        font=dict(family="Roboto", size=12),
-                        plot_bgcolor="#F3F4F6",
-                        paper_bgcolor="#F3F4F6"
+                with col2:
+                    st.write("Period 2")
+                    period2_range = st.date_input(
+                        "Select Period 2",
+                        value=(df["Billing Date"].min(), df["Billing Date"].max()),
+                        key="ca_p2_range"
                     )
-                    st.plotly_chart(fig, use_container_width=True)
-                except Exception as e:
-                    st.error(f"An error occurred: {e}")
             else:
-                st.warning("Please select both a grouping column and a value column.")
+                period1_range = period2_range = None
+                st.info("⚠️ No 'Billing Date' column found. Period comparison disabled.")
+
+            if group_cols and value_col and period1_range and period2_range and len(period1_range) == 2 and len(period2_range) == 2:
+                # Period 1
+                p1_start, p1_end = pd.to_datetime(period1_range[0]), pd.to_datetime(period1_range[1])
+                df_p1 = df[(df["Billing Date"] >= p1_start) & (df["Billing Date"] <= p1_end)]
+                summary_p1 = df_p1.groupby(group_cols)[value_col].sum().reset_index()
+                summary_p1.rename(columns={value_col: "Period 1"}, inplace=True)
+
+                # Period 2
+                p2_start, p2_end = pd.to_datetime(period2_range[0]), pd.to_datetime(period2_range[1])
+                df_p2 = df[(df["Billing Date"] >= p2_start) & (df["Billing Date"] <= p2_end)]
+                summary_p2 = df_p2.groupby(group_cols)[value_col].sum().reset_index()
+                summary_p2.rename(columns={value_col: "Period 2"}, inplace=True)
+
+                # Merge
+                comparison_df = pd.merge(summary_p1, summary_p2, on=group_cols, how="outer").fillna(0)
+                comparison_df["Difference"] = comparison_df["Period 2"] - comparison_df["Period 1"]
+
+                st.subheader(f"📋 Comparison of {value_col} by {', '.join(group_cols)}")
+                st.dataframe(
+                    comparison_df.style.format({
+                        "Period 1": "{:,.2f}",
+                        "Period 2": "{:,.2f}",
+                        "Difference": "{:,.2f}"
+                    }),
+                    use_container_width=True
+                )
+
+                # Chart
+                fig = px.bar(
+                    comparison_df.sort_values(by="Period 2", ascending=False),
+                    x=group_cols[0] if len(group_cols) == 1 else comparison_df[group_cols].astype(str).agg(" | ".join, axis=1),
+                    y=["Period 1", "Period 2"],
+                    barmode="group",
+                    title=f"Comparison of {value_col} by {', '.join(group_cols)}",
+                    color_discrete_sequence=px.colors.qualitative.Set2
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Download
+                st.download_button(
+                    "⬇️ Download Comparison (Excel)",
+                    data=to_excel_bytes(comparison_df, sheet_name="Custom_Comparison", index=False),
+                    file_name=f"Custom_Comparison_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.info("👉 Please select at least one group column, one value column, and valid date ranges.")
 
 # --- SP/PY Target Allocation Page ---
 elif choice == "SP/PY Target Allocation":
