@@ -129,6 +129,16 @@ st.markdown(
         font-weight: bold;
         transition: width 0.5s ease-in-out;
     }
+
+    /* Green caption styling for specific percentage captions */
+    .green-caption {
+        color: #15803D !important;
+        font-weight: 600;
+        font-size: 14px;
+    }
+    .dark-mode .green-caption {
+        color: #6EE7B7 !important; /* Lighter green for dark mode */
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -527,19 +537,19 @@ elif choice == "Sales Tracking":
 
                 # --- KPI Data for PPTX ---
                 kpi_data = {
-                    "KA Target": f"KD {total_ka_target_all:,.2f}",
-                    "Talabat Target": f"KD {total_tal_target_all:,.2f}",
-                    "KA Gap": f"KD {(total_ka_target_all - total_sales.sum()):,.2f}",
-                    "Total Talabat Gap": f"KD {talabat_gap.sum():,.2f}",
-                    "Total KA Sales": f"KD {total_sales.sum():,.2f} ({((total_sales.sum() / total_ka_target_all) * 100):.2f}%)" if total_ka_target_all else f"KD {total_sales.sum():,.2f} (0.00%)",
-                    "Total Talabat Sales": f"KD {talabat_sales.sum():,.2f} ({((talabat_sales.sum() / total_tal_target_all) * 100):.2f}%)" if total_tal_target_all else f"KD {talabat_sales.sum():,.2f} (0.00%)",
-                    "KA & Other E-com": f"KD {ka_other_ecom_sales:,.2f} ({ka_other_ecom_pct:.2f}%)",
-                    "Market Sales": f"KD {total_retail_sales:,.2f} ({retail_sales_pct:.2f}%)",
-                    "E-com Sales": f"KD {total_ecom_sales:,.2f} ({ecom_sales_pct:.2f}%)",
+                    "KA Target": f"KD {total_ka_target_all:,.0f}",
+                    "Talabat Target": f"KD {total_tal_target_all:,.0f}",
+                    "KA Gap": f"KD {(total_ka_target_all - total_sales.sum()):,.0f}",
+                    "Total Talabat Gap": f"KD {talabat_gap.sum():,.0f}",
+                    "Total KA Sales": f"KD {total_sales.sum():,.0f} ({((total_sales.sum() / total_ka_target_all) * 100):.0f}%)" if total_ka_target_all else f"KD {total_sales.sum():,.0f} (0%)",
+                    "Total Talabat Sales": f"KD {talabat_sales.sum():,.0f} ({((talabat_sales.sum() / total_tal_target_all) * 100):.0f}%)" if total_tal_target_all else f"KD {talabat_sales.sum():,.0f} (0%)",
+                    "KA & Other E-com": f"KD {ka_other_ecom_sales:,.0f} ({ka_other_ecom_pct:.0f}%)",
+                    "Market Sales": f"KD {total_retail_sales:,.0f} ({retail_sales_pct:.0f}%)",
+                    "E-com Sales": f"KD {total_ecom_sales:,.0f} ({ecom_sales_pct:.0f}%)",
                     "Days Finished (working)": f"{days_finish}",
-                    "Per Day KA Target": f"KD {per_day_ka_target:,.2f}",
-                    "Current Sales Per Day": f"KD {current_sales_per_day:,.2f}",
-                    "Forecasted Month-End KA Sales": f"KD {forecast_month_end_ka:,.2f}"
+                    "Per Day KA Target": f"KD {per_day_ka_target:,.0f}",
+                    "Current Sales Per Day": f"KD {current_sales_per_day:,.0f}",
+                    "Forecasted Month-End KA Sales": f"KD {forecast_month_end_ka:,.0f}"
                 }
 
                 tabs = st.tabs(["📈 KPIs", "📋 Tables", "📊 Charts", "💾 Downloads"])
@@ -549,45 +559,45 @@ elif choice == "Sales Tracking":
                     st.subheader("🏆 Key Metrics")
                     r1c1 = st.columns(1)[0]
                     with r1c1:
-                        st.metric("Total KA Sales", f"KD {total_sales.sum():,.2f}")
+                        st.metric("Total KA Sales", f"KD {total_sales.sum():,.0f}")
                         progress_pct_ka = (total_sales.sum() / total_ka_target_all * 100) if total_ka_target_all > 0 else 0
                         st.markdown(create_progress_bar_html(progress_pct_ka), unsafe_allow_html=True)
-                        st.caption(f"{progress_pct_ka:.2f}% of KA Target Achieved")
+                        st.markdown(f'<div class="green-caption">{progress_pct_ka:.0f}% of KA Target Achieved</div>', unsafe_allow_html=True)
 
                     r2c1, r2c2 = st.columns(2)
                     with r2c1:
-                        st.metric("KA & Other E-com", f"KD {ka_other_ecom_sales:,.2f}")
+                        st.metric("KA & Other E-com", f"KD {ka_other_ecom_sales:,.0f}")
                         st.markdown(create_progress_bar_html(ka_other_ecom_pct), unsafe_allow_html=True)
-                        st.caption(f"{ka_other_ecom_pct:.2f}% of KA Target")
+                        st.markdown(f'<div class="green-caption">{ka_other_ecom_pct:.0f}% of KA Target</div>', unsafe_allow_html=True)
                     with r2c2:
-                        st.metric("Total Talabat Sales", f"KD {talabat_sales.sum():,.2f}")
+                        st.metric("Talabat Sales", f"KD {talabat_sales.sum():,.0f}")
                         progress_pct_talabat = (talabat_sales.sum() / total_tal_target_all * 100) if total_tal_target_all > 0 else 0
                         st.markdown(create_progress_bar_html(progress_pct_talabat), unsafe_allow_html=True)
-                        st.caption(f"{progress_pct_talabat:.2f}% of Talabat Target Achieved")
+                        st.markdown(f'<div class="green-caption">{progress_pct_talabat:.0f}% of Talabat Target Achieved</div>', unsafe_allow_html=True)
 
                     st.subheader("🎯 Target Overview")
                     r3c1, r3c2, r3c3, r3c4 = st.columns(4)
-                    r3c1.metric("KA Target", f"KD {total_ka_target_all:,.2f}")
-                    r3c2.metric("Talabat Target", f"KD {total_tal_target_all:,.2f}")
-                    r3c3.metric("KA Gap", f"KD {(total_ka_target_all - total_sales.sum()):,.2f}")
-                    r3c4.metric("Total Talabat Gap", f"KD {talabat_gap.sum():,.2f}")
+                    r3c1.metric("KA Target", f"KD {total_ka_target_all:,.0f}")
+                    r3c2.metric("Talabat Target", f"KD {total_tal_target_all:,.0f}")
+                    r3c3.metric("KA Gap", f"KD {(total_ka_target_all - total_sales.sum()):,.0f}")
+                    r3c4.metric(" Talabat Gap", f"KD {talabat_gap.sum():,.0f}")
 
                     st.subheader("📊 Channel Sales")
                     r4c1, r4c2 = st.columns(2)
                     with r4c1:
-                        st.metric("Market Sales", f"KD {total_retail_sales:,.2f}")
+                        st.metric("Retail Sales", f"KD {total_retail_sales:,.0f}")
                         retail_contribution_pct = (total_retail_sales / total_sales.sum() * 100) if total_sales.sum() > 0 else 0
-                        st.caption(f"{retail_contribution_pct:.2f}% of Total KA Sales")
+                        st.caption(f"{retail_contribution_pct:.0f}% of Total KA Sales")
                     with r4c2:
-                        st.metric("E-com Sales", f"KD {total_ecom_sales:,.2f}")
+                        st.metric("E-com Sales", f"KD {total_ecom_sales:,.0f}")
                         ecom_contribution_pct = (total_ecom_sales / total_sales.sum() * 100) if total_sales.sum() > 0 else 0
-                        st.caption(f"{ecom_contribution_pct:.2f}% of Total KA Sales")
+                        st.caption(f"{ecom_contribution_pct:.0f}% of Total KA Sales")
 
                     st.subheader("📈 Performance Metrics")
                     r5c1, r5c2, r5c3 = st.columns(3)
                     r5c1.metric("Days Finished (working)", days_finish)
-                    r5c2.metric("Current Sales Per Day", f"KD {current_sales_per_day:,.2f}")
-                    r5c3.metric("Forecasted Month-End KA Sales", f"KD {forecast_month_end_ka:,.2f}")
+                    r5c2.metric("Current Sales Per Day", f"KD {current_sales_per_day:,.0f}")
+                    r5c3.metric("Forecasted Month-End KA Sales", f"KD {forecast_month_end_ka:,.0f}")
 
                 # --- TABLES ---
                 with tabs[1]:
@@ -659,14 +669,14 @@ elif choice == "Sales Tracking":
                     display_df = billing_wide.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
                     display_df["Sales Total"] = billing_wide.sum(axis=1)
                     display_df["Return"] = billing_wide["YKRE"] + billing_wide["ZRE"]
-                    display_df["Return %"] = np.where(display_df["Sales Total"] != 0, (display_df["Return"] / display_df["Sales Total"] * 100).round(2), 0)
+                    display_df["Return %"] = np.where(display_df["Sales Total"] != 0, (display_df["Return"] / display_df["Sales Total"] * 100).round(0), 0)
                     display_df["Cancel Total"] = billing_wide[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
                     ordered_cols = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN", "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
                     display_df = display_df.reindex(columns=ordered_cols, fill_value=0)
 
                     total_row = pd.DataFrame(display_df.sum(numeric_only=True)).T
                     total_row.index = ["Total"]
-                    total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100), 2) if total_row["Sales Total"].iloc[0] != 0 else 0
+                    total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100), 0) if total_row["Sales Total"].iloc[0] != 0 else 0
                     billing_df = pd.concat([display_df, total_row])
 
                     col_to_color = {
@@ -689,7 +699,7 @@ elif choice == "Sales Tracking":
                         .format({
                             "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
                             "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
-                            "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.2f}%"
+                            "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
                         })
                     )
                     st.dataframe(styled_billing, use_container_width=True)
@@ -982,9 +992,9 @@ elif choice == "Year to Date Comparison":
             st.subheader(f"📋 Comparison by {dimension}")
             st.dataframe(
                 ytd_comparison.style.format({
-                    "First Period Value": "{:,.2f}",
-                    "2nd Period Value": "{:,.2f}",
-                    "Difference": "{:,.2f}"
+                    "First Period Value": "{:,.0f}",
+                    "2nd Period Value": "{:,.0f}",
+                    "Difference": "{:,.0f}"
                 }),
                 use_container_width=True
             )
@@ -1068,9 +1078,9 @@ elif choice == "Custom Analysis":
                 st.subheader(f"📋 Comparison of {value_col} by {', '.join(group_cols)}")
                 st.dataframe(
                     comparison_df.style.format({
-                        "Period 1": "{:,.2f}",
-                        "Period 2": "{:,.2f}",
-                        "Difference": "{:,.2f}"
+                        "Period 1": "{:,.0f}",
+                        "Period 2": "{:,.0f}",
+                        "Difference": "{:,.0f}"
                     }),
                     use_container_width=True
                 )
@@ -1122,7 +1132,7 @@ elif choice == "SP/PY Target Allocation":
             st.error("❌ 'Target' sheet or 'KA Target' column not found. Please upload a file with this sheet for 'Auto' mode.")
             st.stop()
         total_target = target_df["KA Target"].sum()
-        st.info(f"Using Total Target from 'Target' sheet: KD {total_target:,.2f}")
+        st.info(f"Using Total Target from 'Target' sheet: KD {total_target:,.0f}")
 
     if total_target <= 0:
         st.warning("Please ensure the total target is greater than 0.")
@@ -1166,18 +1176,18 @@ elif choice == "SP/PY Target Allocation":
         st.subheader("🎯 Target Analysis")
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
-        with col1: st.metric("Historical Sales Total", f"KD {total_historical_sales_value:,.2f}")
-        with col2: st.metric("Allocated Target Total", f"KD {total_target:,.2f}")
+        with col1: st.metric("Historical Sales Total", f"KD {total_historical_sales_value:,.0f}")
+        with col2: st.metric("Allocated Target Total", f"KD {total_target:,.0f}")
         with col3:
             if average_historical_sales > 0:
                 percentage_increase_needed = ((total_target - average_historical_sales) / average_historical_sales) * 100
                 delta_value = total_target - average_historical_sales
-                st.metric("Increase Needed vs Avg Sales", f"{percentage_increase_needed:.2f}%", delta=f"KD {delta_value:,.2f}")
+                st.metric("Increase Needed vs Avg Sales", f"{percentage_increase_needed:.0f}%", delta=f"KD {delta_value:,.0f}")
             else:
                 st.metric("Increase Needed vs Avg Sales", "N/A", delta="Historical = 0")
         st.markdown("---")
-        with col4: st.metric("Current Month Sales", f"KD {total_current_month_sales:,.2f}")
-        with col5: st.metric("Target Balance", f"KD {target_balance:,.2f}")
+        with col4: st.metric("Current Month Sales", f"KD {total_current_month_sales:,.0f}")
+        with col5: st.metric("Target Balance", f"KD {target_balance:,.0f}")
 
     allocation_table = pd.DataFrame(index=historical_sales.index.union(current_month_sales.index).unique())
     allocation_table.index.name = "Name"
