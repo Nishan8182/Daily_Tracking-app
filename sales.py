@@ -60,12 +60,15 @@ st.markdown(
         border: 1px solid #E2E8F0;
     }
     .dataframe th {
-        background: linear-gradient(135deg, #0F172A, #1E293B) !important;
+        background: #1E3A8A !important; /* Dark blue for headers */
         color: #FFFFFF !important;
         font-weight: 800 !important;
         padding: 12px !important;
         text-transform: uppercase;
         letter-spacing: 0.4px;
+        height: 40px !important; /* Fixed header height */
+        line-height: 40px !important;
+        border: 1px solid #E5E7EB !important;
     }
     .dataframe td {
         background-color: #FFFFFF;
@@ -73,6 +76,9 @@ st.markdown(
         padding: 10px !important;
         font-weight: 600;
         color: #0F172A;
+        height: 40px !important; /* Fixed row height */
+        line-height: 40px !important;
+        vertical-align: middle !important;
     }
 
     /* Sidebar */
@@ -102,7 +108,7 @@ st.markdown(
     .dark-mode .main { background-color: #1F2937; }
     .dark-mode h1, .dark-mode h2, .dark-mode h3 { color: #F3F4F6; }
     .dark-mode .dataframe td { background-color: #111827; color: #F3F4F6; }
-    .dark-mode .dataframe th { background: linear-gradient(135deg, #111827, #1F2937) !important; }
+    .dark-mode .dataframe th { background: #1E3A8A !important; } /* Dark blue headers in dark mode */
     .dark-mode div[data-testid="stMetric"] { background: linear-gradient(180deg,#111827,#0B1220); border-color:#60A5FA; box-shadow: 0 10px 20px rgba(59,130,246,0.25); }
 
     /* Tooltip */
@@ -619,7 +625,10 @@ elif choice == "Sales Tracking":
                     total_row["KA % Achieved"] = round(total_row["KA Sales"]/total_row["KA Target"]*100,0) if total_row["KA Target"].iloc[0]!=0 else 0
                     total_row["Talabat % Achieved"] = round(total_row["Talabat Sales"]/total_row["Talabat Target"]*100,0) if total_row["Talabat Target"].iloc[0]!=0 else 0
 
-                    report_df_with_total = pd.concat([report_df, total_row], ignore_index=False)
+                    total_row = total_row.reset_index(drop=True)
+                    total_row["Salesman"] = "Total"
+                    total_row = total_row[report_df.columns]
+                    report_df_with_total = pd.concat([report_df, total_row], ignore_index=True)
 
                     col_to_color = {
                         "Salesman": "background-color: #CCFFE6; color:#0F766E; font-weight:700",
@@ -637,20 +646,22 @@ elif choice == "Sales Tracking":
                         return [col_to_color.get(c, "") for c in s.index]
 
                     def highlight_total_row(row):
-                        return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
+                        return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row['Salesman'] == "Total" else '' for _ in row]
 
                     styled_report = (
                         report_df_with_total.style
-                        .set_table_styles([dict(selector='th', props=[('background','#1F2937'), ('color','white'), ('font-weight','800')])])
+                        .set_table_styles([
+                            {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'), ('font-weight', '800'), ('height', '40px'), ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                        ])
                         .apply(highlight_columns, axis=1)
                         .apply(highlight_total_row, axis=1)
                         .format("{:,.0f}", subset=["KA Target","KA Sales","KA Remaining","Talabat Target","Talabat Sales","Talabat Remaining"])
                         .format("{:.0f}%", subset=["KA % Achieved","Talabat % Achieved"])
                     )
-                    st.dataframe(styled_report, use_container_width=True)
+                    st.dataframe(styled_report, use_container_width=True, hide_index=True)
                     st.download_button(
                         "⬇️ Download Sales & Targets Summary (Excel)",
-                        data=to_excel_bytes(report_df_with_total.reset_index(), sheet_name="Sales_Targets_Summary"),
+                        data=to_excel_bytes(report_df_with_total, sheet_name="Sales_Targets_Summary", index=False),
                         file_name=f"Sales_Targets_Summary_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
@@ -679,6 +690,8 @@ elif choice == "Sales Tracking":
                     total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100), 0) if total_row["Sales Total"].iloc[0] != 0 else 0
                     billing_df = pd.concat([display_df, total_row])
 
+                    billing_df.index.name = "Salesman"
+
                     col_to_color = {
                         **{c: "background-color: #CCFFE6; color:#0F766E; font-weight:700" for c in ["Presales", "HHT", "Sales Total"]},
                         **{c: "background-color: #FFE4CC; color:#9A3412; font-weight:700" for c in ["YKS1", "YKS2", "ZCAN", "Cancel Total"]},
@@ -693,7 +706,9 @@ elif choice == "Sales Tracking":
 
                     styled_billing = (
                         billing_df.style
-                        .set_table_styles([dict(selector='th', props=[('background','#1F2937'), ('color','white'), ('font-weight','800')])])
+                        .set_table_styles([
+                            {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'), ('font-weight', '800'), ('height', '40px'), ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                        ])
                         .apply(highlight_columns_billing, axis=1)
                         .apply(highlight_total_row_billing, axis=1)
                         .format({
@@ -702,10 +717,10 @@ elif choice == "Sales Tracking":
                             "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
                         })
                     )
-                    st.dataframe(styled_billing, use_container_width=True)
+                    st.dataframe(styled_billing, use_container_width=True, hide_index=False)
                     st.download_button(
                         "⬇️ Download Billing Type Table (Excel)",
-                        data=to_excel_bytes(billing_df.reset_index(), sheet_name="Billing_Types"),
+                        data=to_excel_bytes(billing_df, sheet_name="Billing_Types", index=False),
                         file_name=f"Billing_Types_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
@@ -717,6 +732,8 @@ elif choice == "Sales Tracking":
                     total_row = py_table.sum(numeric_only=True).to_frame().T
                     total_row.index = ["Total"]
                     py_table_with_total = pd.concat([py_table, total_row])
+
+                    py_table_with_total.index.name = "PY Name 1"
 
                     col_to_color = {
                         "Sales": "background-color: #CCFFE6; color:#0F766E; font-weight:700",
@@ -731,16 +748,18 @@ elif choice == "Sales Tracking":
 
                     styled_py = (
                         py_table_with_total.style
-                        .set_table_styles([dict(selector='th', props=[('background','#1F2937'), ('color','white'), ('font-weight','800')])])
+                        .set_table_styles([
+                            {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'), ('font-weight', '800'), ('height', '40px'), ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                        ])
                         .apply(highlight_columns_py, axis=1)
                         .apply(highlight_total_row_py, axis=1)
                         .format("{:,.0f}", subset=["Sales"])
                         .format("{:.0f}%", subset=["Contribution %"])
                     )
-                    st.dataframe(styled_py, use_container_width=True)
+                    st.dataframe(styled_py, use_container_width=True, hide_index=False)
                     st.download_button(
                         "⬇️ Download PY Name Table (Excel)",
-                        data=to_excel_bytes(py_table_with_total.reset_index(), sheet_name="Sales_by_PY_Name"),
+                        data=to_excel_bytes(py_table_with_total, sheet_name="Sales_by_PY_Name", index=False),
                         file_name=f"Sales_by_PY_Name_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
@@ -936,7 +955,7 @@ elif choice == "Sales Tracking":
                     st.subheader("📦 Consolidated Downloads")
                     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                     excel_data_combined = to_multi_sheet_excel_bytes(
-                        [report_df, billing_df, py_table],
+                        [report_df_with_total, billing_df, py_table],
                         ["Sales_Targets_Summary", "Billing_Types", "Sales_by_PY_Name"]
                     )
                     st.download_button(
@@ -954,7 +973,7 @@ elif choice == "Sales Tracking":
                         file_name=f"filtered_sales_data_{timestamp}.csv",
                         mime="text/csv"
                     )
-                    pptx_data = create_pptx(report_df.reset_index(), billing_df.reset_index(), py_table.reset_index(), figs_dict, kpi_data)
+                    pptx_data = create_pptx(report_df_with_total.reset_index(), billing_df.reset_index(), py_table.reset_index(), figs_dict, kpi_data)
                     st.download_button("📄 Download PPTX Report", data=pptx_data, file_name=f"sales_report_{timestamp}.pptx")
 
 # --- YTD Comparison Page ---
@@ -983,21 +1002,24 @@ elif choice == "Year to Date Comparison":
             period2_start, period2_end = period2_range
             df_p1 = ytd_df[(ytd_df["Billing Date"] >= pd.to_datetime(period1_start)) & (ytd_df["Billing Date"] <= pd.to_datetime(period1_end))]
             df_p2 = ytd_df[(ytd_df["Billing Date"] >= pd.to_datetime(period2_start)) & (ytd_df["Billing Date"] <= pd.to_datetime(period2_end))]
-            summary_p1 = df_p1.groupby(dimension)["Net Value"].sum().reset_index().rename(columns={"Net Value": "First Period Value"})
-            summary_p2 = df_p2.groupby(dimension)["Net Value"].sum().reset_index().rename(columns={"Net Value": "2nd Period Value"})
+            summary_p1 = df_p1.groupby(dimension)["Net Value"].sum().reset_index().rename(columns={"Net Value": f"{period1_start.strftime('%Y-%m-%d')} to {period1_end.strftime('%Y-%m-%d')} Sales"})
+            summary_p2 = df_p2.groupby(dimension)["Net Value"].sum().reset_index().rename(columns={"Net Value": f"{period2_start.strftime('%Y-%m-%d')} to {period2_end.strftime('%Y-%m-%d')} Sales"})
             ytd_comparison = pd.merge(summary_p1, summary_p2, on=dimension, how="outer").fillna(0)
-            ytd_comparison["Difference"] = ytd_comparison["2nd Period Value"] - ytd_comparison["First Period Value"]
+            ytd_comparison["Difference"] = ytd_comparison.iloc[:, 2] - ytd_comparison.iloc[:, 1]
             ytd_comparison.rename(columns={dimension: "Name"}, inplace=True)
+            ytd_comparison.loc['Total'] = ytd_comparison.sum(numeric_only=True)
+            ytd_comparison.loc['Total', 'Name'] = 'Total'
 
             st.subheader(f"📋 Comparison by {dimension}")
-            st.dataframe(
-                ytd_comparison.style.format({
-                    "First Period Value": "{:,.0f}",
-                    "2nd Period Value": "{:,.0f}",
-                    "Difference": "{:,.0f}"
-                }),
-                use_container_width=True
+            styled_ytd = (
+                ytd_comparison.style
+                .set_table_styles([
+                    {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'), ('font-weight', '800'), ('height', '40px'), ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                ])
+                .apply(lambda x: ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if x.name == 'Total' else '' for _ in x], axis=1)
+                .format("{:,.0f}", subset=[ytd_comparison.columns[1], ytd_comparison.columns[2], 'Difference'])
             )
+            st.dataframe(styled_ytd, use_container_width=True, hide_index=False)
 
             st.download_button(
                 "⬇️ Download YTD Comparison (Excel)",
@@ -1008,17 +1030,18 @@ elif choice == "Year to Date Comparison":
     else:
         st.warning("⚠️ Please ensure the 'YTD' sheet is present in your uploaded file.")
 
+# --- Custom Analysis Page ---
 elif choice == "Custom Analysis":
     st.title("🔍 Custom Analysis")
     if "data_loaded" not in st.session_state:
         st.warning("⚠️ Please upload the Excel file in the sidebar (one-time).")
     else:
-        # Allow user to choose which sheet to analyze
         sheet_options = {
             "Sales Data": st.session_state.get("sales_df", pd.DataFrame()),
             "YTD": st.session_state.get("ytd_df", pd.DataFrame()),
             "Target": st.session_state.get("target_df", pd.DataFrame()),
-            "Sales Channels": st.session_state.get("channels_df", pd.DataFrame())
+            "Sales Channels": st.session_state.get("channels_df", pd.DataFrame()),
+            "Extra sheet": st.session_state.get("Extra_sheet_df", pd.DataFrame())
         }
         selected_sheet_name = st.selectbox("📑 Select Sheet for Analysis", list(sheet_options.keys()))
         df = sheet_options[selected_sheet_name]
@@ -1030,13 +1053,9 @@ elif choice == "Custom Analysis":
 
             available_cols = list(df.columns)
 
-            # Multiple group by columns
             group_cols = st.multiselect("Group by columns", available_cols)
-
-            # Value column to analyze
             value_col = st.selectbox("Value to analyze", available_cols)
 
-            # Select two periods (only if Billing Date exists)
             if "Billing Date" in df.columns:
                 st.subheader("📆 Select Two Periods")
                 col1, col2 = st.columns(2)
@@ -1059,33 +1078,33 @@ elif choice == "Custom Analysis":
                 st.info("⚠️ No 'Billing Date' column found. Period comparison disabled.")
 
             if group_cols and value_col and period1_range and period2_range and len(period1_range) == 2 and len(period2_range) == 2:
-                # Period 1
                 p1_start, p1_end = pd.to_datetime(period1_range[0]), pd.to_datetime(period1_range[1])
                 df_p1 = df[(df["Billing Date"] >= p1_start) & (df["Billing Date"] <= p1_end)]
                 summary_p1 = df_p1.groupby(group_cols)[value_col].sum().reset_index()
                 summary_p1.rename(columns={value_col: "Period 1"}, inplace=True)
 
-                # Period 2
                 p2_start, p2_end = pd.to_datetime(period2_range[0]), pd.to_datetime(period2_range[1])
                 df_p2 = df[(df["Billing Date"] >= p2_start) & (df["Billing Date"] <= p2_end)]
                 summary_p2 = df_p2.groupby(group_cols)[value_col].sum().reset_index()
                 summary_p2.rename(columns={value_col: "Period 2"}, inplace=True)
 
-                # Merge
                 comparison_df = pd.merge(summary_p1, summary_p2, on=group_cols, how="outer").fillna(0)
                 comparison_df["Difference"] = comparison_df["Period 2"] - comparison_df["Period 1"]
 
                 st.subheader(f"📋 Comparison of {value_col} by {', '.join(group_cols)}")
-                st.dataframe(
-                    comparison_df.style.format({
+                styled_custom = (
+                    comparison_df.style
+                    .set_table_styles([
+                        {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'), ('font-weight', '800'), ('height', '40px'), ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                    ])
+                    .format({
                         "Period 1": "{:,.0f}",
                         "Period 2": "{:,.0f}",
                         "Difference": "{:,.0f}"
-                    }),
-                    use_container_width=True
+                    })
                 )
+                st.dataframe(styled_custom, use_container_width=True)
 
-                # Chart
                 fig = px.bar(
                     comparison_df.sort_values(by="Period 2", ascending=False),
                     x=group_cols[0] if len(group_cols) == 1 else comparison_df[group_cols].astype(str).agg(" | ".join, axis=1),
@@ -1096,7 +1115,6 @@ elif choice == "Custom Analysis":
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Download
                 st.download_button(
                     "⬇️ Download Comparison (Excel)",
                     data=to_excel_bytes(comparison_df, sheet_name="Custom_Comparison", index=False),
@@ -1212,10 +1230,15 @@ elif choice == "SP/PY Target Allocation":
         return ''
 
     st.subheader(f"📊 Auto-Allocated Targets Based on {days_label}")
-    st.dataframe(
-        allocation_table_with_total.astype(int).style.format("{:,.0f}").applymap(color_target_balance, subset=['Target Balance']),
-        use_container_width=True
+    styled_allocation = (
+        allocation_table_with_total.astype(int).style
+        .set_table_styles([
+            {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'), ('font-weight', '800'), ('height', '40px'), ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+        ])
+        .apply(lambda x: ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if x.name == 'Total' else '' for _ in x], axis=1)
+        .format("{:,.0f}")
     )
+    st.dataframe(styled_allocation, use_container_width=True)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     excel_data = to_excel_bytes(allocation_table, sheet_name="Allocated_Targets")
