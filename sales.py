@@ -1,15 +1,3 @@
-# **Crafting "AI Insights" Page**
-
-# I need to make sure the style is consistent. So, I’ll add "AI Insights" to the menu and implement a page that:
-
-# - Checks if the data is loaded.
-# - Provides filters, either mirroring Sales Tracking or full dataset options — just enough control to match existing logic without changing things.
-# - I’ll calculate KPIs, YTD comparisons, and target allocation overviews with minimal changes.
-# - The narrative will summarize key points, then create an executive summary and offer a downloadable text report.
-
-# It all comes down to making sure I don’t mess with the current app's logic!
-# ### Full updated Streamlit app with “AI Insights” page (copy-paste single file)
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -1318,10 +1306,11 @@ elif choice == "AI Insights":
     def ytd_quick_compare(ytd_df):
         if ytd_df.empty:
             return None
+        # Use the max date in ytd_df as effective "today" to avoid future date issues
+        effective_today = ytd_df["Billing Date"].max()
         # Last 30 days vs prior 30 days (rolling window quick pulse)
-        end = ytd_df["Billing Date"].max()
-        p2_end = end
-        p2_start = end - pd.Timedelta(days=30)
+        p2_end = effective_today
+        p2_start = effective_today - pd.Timedelta(days=30)
         p1_end = p2_start
         p1_start = p1_end - pd.Timedelta(days=30)
 
@@ -1334,15 +1323,16 @@ elif choice == "AI Insights":
         pct = (diff / total_p1 * 100) if total_p1 else np.nan
 
         # Enhanced: YoY if possible (assume data spans years)
-        current_year = today.year
+        current_year = effective_today.year
         prev_year = current_year - 1
         ytd_current = ytd_df[(ytd_df["Billing Date"].dt.year == current_year)]["Net Value"].sum()
         ytd_prev = ytd_df[(ytd_df["Billing Date"].dt.year == prev_year)]["Net Value"].sum()
         yoy_diff = ytd_current - ytd_prev
         yoy_pct = (yoy_diff / ytd_prev * 100) if ytd_prev else np.nan
 
-        # New: MoM growth
-        current_month = today.month
+        # New: MoM growth using latest available month as "current"
+        current_month = effective_today.month
+        current_year = effective_today.year
         prev_month = current_month - 1 if current_month > 1 else 12
         prev_month_year = current_year if current_month > 1 else current_year - 1
         mom_current = ytd_df[(ytd_df["Billing Date"].dt.year == current_year) & (ytd_df["Billing Date"].dt.month == current_month)]["Net Value"].sum()
@@ -1358,7 +1348,8 @@ elif choice == "AI Insights":
             ytd_current=ytd_current, ytd_prev=ytd_prev,
             yoy_diff=yoy_diff, yoy_pct=yoy_pct,
             mom_current=mom_current, mom_prev=mom_prev,
-            mom_diff=mom_diff, mom_pct=mom_pct
+            mom_diff=mom_diff, mom_pct=mom_pct,
+            latest_month_label=f"{effective_today.strftime('%B %Y')}"
         )
 
     ytd_pulse = ytd_quick_compare(ytd_df)
@@ -1375,7 +1366,8 @@ elif choice == "AI Insights":
             return None
         months_count = (end_date - start_date).days / 30 if (end_date - start_date).days > 0 else 6
         total_hist = hist["Net Value"].sum()
-        current_month = sales_df[(sales_df["Billing Date"].dt.month == today.month) & (sales_df["Billing Date"].dt.year == today.year)]
+        effective_today = sales_df["Billing Date"].max() if not sales_df.empty else today
+        current_month = sales_df[(sales_df["Billing Date"].dt.month == effective_today.month) & (sales_df["Billing Date"].dt.year == effective_today.year)]
         current_month_total = current_month["Net Value"].sum()
         allocated_target_sheet = target_df["KA Target"].sum() if "KA Target" in target_df.columns else 0
         avg_hist = total_hist / months_count if months_count else 0
@@ -1408,7 +1400,8 @@ elif choice == "AI Insights":
             current_month_total=current_month_total,
             inc_needed_pct=inc_needed_pct,
             target_sales_corr=corr,
-            suggested_targets=target_adjust
+            suggested_targets=target_adjust,
+            latest_month_label=f"{effective_today.strftime('%B %Y')}"
         )
 
     alloc_pulse = allocation_pulse()
@@ -1463,7 +1456,7 @@ elif choice == "AI Insights":
     def advanced_forecast(df_time):
         if len(df_time) < 14:  # At least two full cycles for seasonal=7
             return None
-        model = ExponentialSmoothing(df_time["y"], trend="add", seasonal="add", seasonal_periods=7)
+        model = ExponentialSmoothing(df_time["y"], trend="add", seasonal="add", seasonal_periods=7, initialization_method='estimated')
         fit = model.fit()
         forecast = fit.forecast(30)
         return forecast
@@ -1559,13 +1552,13 @@ elif choice == "AI Insights":
         yoy_pct_txt = f"{p['yoy_pct']:.0f}%" if pd.notnull(p["yoy_pct"]) else "N/A"
         summary_lines.append(
             f"- YoY YTD: {yoy_trend} by {fmt_kd(abs(p['yoy_diff']))} ({yoy_pct_txt}). "
-            f"Current year: {fmt_kd(p['ytd_current'])}, Prev year: {fmt_kd(p['ytd_prev'])}."
+            f"Latest year: {fmt_kd(p['ytd_current'])}, Prev year: {fmt_kd(p['ytd_prev'])}."
         )
         mom_trend = "up" if p["mom_diff"] > 0 else "down" if p["mom_diff"] < 0 else "flat"
         mom_pct_txt = f"{p['mom_pct']:.0f}%" if pd.notnull(p["mom_pct"]) else "N/A"
         summary_lines.append(
             f"- MoM: {mom_trend} by {fmt_kd(abs(p['mom_diff']))} ({mom_pct_txt}). "
-            f"Current month: {fmt_kd(p['mom_current'])}, Prev month: {fmt_kd(p['mom_prev'])}."
+            f"Latest month ({p['latest_month_label']}): {fmt_kd(p['mom_current'])}, Prev month: {fmt_kd(p['mom_prev'])}."
         )
 
     # Allocation pulse
@@ -1574,7 +1567,7 @@ elif choice == "AI Insights":
         inc_txt = f"{a['inc_needed_pct']:.0f}%" if pd.notnull(a['inc_needed_pct']) else "N/A"
         summary_lines.append(
             f"- Allocation pulse: Avg monthly from {a['hist_period']} is {fmt_kd(a['avg_hist'])} vs allocated target {fmt_kd(a['allocated_target'])} "
-            f"→ lift needed {inc_txt}. Current month sales: {fmt_kd(a['current_month_total'])}."
+            f"→ lift needed {inc_txt}. Latest month ({a['latest_month_label']}) sales: {fmt_kd(a['current_month_total'])}."
         )
         corr_txt = f"{a['target_sales_corr']:.2f}" if pd.notnull(a["target_sales_corr"]) else "N/A"
         summary_lines.append(f"- Correlation between historical sales and targets: {corr_txt} (higher means targets align well with past performance).")
@@ -1612,6 +1605,8 @@ elif choice == "AI Insights":
         rec_lines.append("- Low target-sales correlation: Realign targets based on recent performance data.")
     if ytd_pulse and ytd_pulse['yoy_pct'] < 0:
         rec_lines.append("- Negative YoY growth: Analyze competitors or internal changes; suggest targeted campaigns.")
+    if ytd_pulse and ytd_pulse['mom_current'] == 0:
+        rec_lines.append("- No data for latest month: Ensure data is up-to-date or check for upload issues.")
     st.write("\n".join(rec_lines) if rec_lines else "- All metrics look stable; maintain current strategies.")
 
     # New: Visualizations for AI Insights
@@ -1634,7 +1629,7 @@ elif choice == "AI Insights":
 
     if ytd_pulse and pd.notnull(ytd_pulse["yoy_pct"]):
         yoy_df = pd.DataFrame({
-            "Year": ["Prev Year", "Current Year"],
+            "Year": ["Prev Year", "Latest Year"],
             "YTD Sales": [ytd_pulse["ytd_prev"], ytd_pulse["ytd_current"]]
         })
         fig_yoy = px.bar(yoy_df, x="Year", y="YTD Sales", title="YoY YTD Sales Comparison")
@@ -1642,7 +1637,7 @@ elif choice == "AI Insights":
 
     if ytd_pulse and pd.notnull(ytd_pulse["mom_pct"]):
         mom_df = pd.DataFrame({
-            "Month": ["Prev Month", "Current Month"],
+            "Month": ["Prev Month", "Latest Month"],
             "Sales": [ytd_pulse["mom_prev"], ytd_pulse["mom_current"]]
         })
         fig_mom = px.bar(mom_df, x="Month", y="Sales", title="MoM Sales Comparison")
@@ -1689,7 +1684,7 @@ elif choice == "AI Insights":
             a = alloc_pulse
             st.write(f"- Avg monthly ({a['hist_period']}): {fmt_kd(a['avg_hist'])}.")
             st.write(f"- Allocated KA target: {fmt_kd(a['allocated_target'])}; lift needed: {(a['inc_needed_pct'] if pd.notnull(a['inc_needed_pct']) else 0):.0f}%.")
-            st.write(f"- Current month progress: {fmt_kd(a['current_month_total'])}.")
+            st.write(f"- Latest month ({a['latest_month_label']}) progress: {fmt_kd(a['current_month_total'])}.")
             st.write(f"- Historical sales vs targets correlation: {(a['target_sales_corr'] if pd.notnull(a['target_sales_corr']) else 'N/A'):.2f}.")
             if not a['suggested_targets'].empty:
                 st.subheader("Suggested Target Adjustments")
