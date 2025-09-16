@@ -1829,3 +1829,5 @@ Channels Sheet:
                 answer_lines.append(f"- Talabat achievement: {tal_ach_pct:.0f}%")
 
         st.write("\n".join(answer_lines))
+        
+        # App End #
