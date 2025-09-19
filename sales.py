@@ -825,13 +825,24 @@ elif choice == "Sales Tracking":
                         x=salesman_target_df["Salesman"],
                         y=salesman_target_df["KA Target"],
                         name="KA Target",
-                        marker_color="#F87171"
+                        marker_color="gray",
+                        text=salesman_target_df["KA Target"].apply(lambda x: f"{x:,.0f}"),
+                        textposition="inside",
+                        insidetextanchor="middle",
+                        textfont=dict(color="white", size=12)
                     ))
                     fig_salesman_target.add_trace(go.Bar(
                         x=salesman_target_df["Salesman"],
                         y=salesman_target_df["KA Sales"],
                         name="KA Sales",
-                        marker_color="#34D399"
+                        marker_color=[
+                            "green" if val >= tgt else "red"
+                            for val, tgt in zip(salesman_target_df["KA Sales"], salesman_target_df["KA Target"])
+                        ],
+                        text=salesman_target_df["KA Sales"].apply(lambda x: f"{x:,.0f}"),
+                        textposition="inside",
+                        insidetextanchor="middle",
+                        textfont=dict(color="white", size=12)
                     ))
                     fig_salesman_target.update_layout(
                         title="KA Target vs Actual Sales by Salesman",
@@ -843,6 +854,7 @@ elif choice == "Sales Tracking":
                         paper_bgcolor="#F3F4F6"
                     )
                     st.plotly_chart(fig_salesman_target, use_container_width=True)
+
 
                     st.subheader("📊 Sales Breakdown by PY Name")
                     py_sales = df_filtered.groupby("PY Name 1")["Net Value"].sum().reset_index()
@@ -992,6 +1004,83 @@ elif choice == "Year to Date Comparison":
                 file_name=f"YTD_Comparison_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+                        # --- Top 10 Customers: Last Year vs Current Year ---
+            st.subheader("🏆 Top 10 Customers – Last Year vs Current Year")
+
+            # Extract year
+            ytd_df["Year"] = ytd_df["Billing Date"].dt.year
+            current_year = pd.Timestamp.today().year
+            last_year = current_year - 1
+
+            # Aggregate sales by customer & year
+            cust_sales = (
+                ytd_df[ytd_df["Year"].isin([last_year, current_year])]
+                .groupby(["PY Name 1", "Year"])["Net Value"]
+                .sum()
+                .reset_index()
+            )
+
+            if cust_sales.empty:
+                st.info("⚠️ No customer sales found for last year or current year.")
+            else:
+                # Pivot for sorting
+                cust_pivot = cust_sales.pivot(index="PY Name 1", columns="Year", values="Net Value").fillna(0)
+                cust_pivot["Total"] = cust_pivot.sum(axis=1)
+
+                # Top 10 customers
+                top10_cust = cust_pivot.sort_values("Total", ascending=False).head(10).reset_index()
+
+                # Merge back for plotting
+                top10_melt = top10_cust.melt(
+                    id_vars="PY Name 1",
+                    value_vars=[last_year, current_year],
+                    var_name="Year",
+                    value_name="Sales"
+                )
+
+                # Add performance status for coloring
+                top10_melt = top10_melt.merge(
+                    top10_cust[["PY Name 1", last_year, current_year]],
+                    on="PY Name 1",
+                    how="left"
+                )
+                top10_melt["Status"] = np.where(
+                    top10_melt["Year"] == current_year,
+                    np.where(top10_melt[current_year] >= top10_melt[last_year], "Achieved", "Not Achieved"),
+                    "Previous"
+                )
+
+                # Define colors
+                color_map = {"Achieved": "green", "Not Achieved": "red", "Previous": "gray"}
+
+                # Plot bar chart
+                fig_top10 = px.bar(
+                    top10_melt,
+                    x="PY Name 1",
+                    y="Sales",
+                    color="Status",
+                    color_discrete_map=color_map,
+                    barmode="group",
+                    text=top10_melt["Sales"].apply(lambda x: f"{x:,.0f}")
+                )
+
+                fig_top10.update_traces(
+                    textposition="inside",
+                    insidetextanchor="middle",
+                    textfont=dict(color="white", size=12)
+                )
+
+                fig_top10.update_layout(
+                    title=f"Top 10 Customers: {last_year} vs {current_year}",
+                    xaxis_title="Customer",
+                    yaxis_title="Sales (KD)",
+                    font=dict(family="Roboto", size=12),
+                    plot_bgcolor="#F3F4F6",
+                    paper_bgcolor="#F3F4F6"
+                )
+
+                st.plotly_chart(fig_top10, use_container_width=True)
+
     else:
         st.warning("⚠️ Please ensure the 'YTD' sheet is present in your uploaded file.")
 
@@ -1088,6 +1177,7 @@ elif choice == "Custom Analysis":
                 )
             else:
                 st.info("👉 Please select at least one group column, one value column, and valid date ranges.")
+                # --- Top 10 Customers: Last Year vs Current Year ---
 
 # --- SP/PY Target Allocation Page ---
 elif choice == "SP/PY Target Allocation":
@@ -1213,7 +1303,7 @@ elif choice == "SP/PY Target Allocation":
         file_name=f"target_allocation_{allocation_type.replace(' ', '_')}_{timestamp}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
+# AI INSIGHTS PAGE#
 elif choice == "AI Insights":
     st.title("🤖 AI Insights")
 
