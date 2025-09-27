@@ -11,5 +11,5 @@ scikit-learn
 kaleido
 statsmodels
 Prophet
-streamlit_authenticato
+authenticato
 
