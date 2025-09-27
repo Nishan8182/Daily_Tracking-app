@@ -12,5 +12,7 @@ kaleido
 statsmodels
 Prophet
 streamlit_authenticator
+fuzz
+
 
 
