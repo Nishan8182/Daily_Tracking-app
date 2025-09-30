@@ -1694,11 +1694,19 @@ elif choice == "Year to Date Comparison":
 
 
 # --- Custom Analysis Page ---
-elif choice == "Custom Analysis":
-    st.title("🔍 Custom Analysis")
+elif choice == texts[lang]["custom_analysis"]:
+    st.title(texts[lang]["custom_title"])
     if "data_loaded" not in st.session_state:
-        st.warning("⚠️ Please upload the Excel file in the sidebar (one-time).")
+        st.warning(texts[lang]["no_data_warning"])
     else:
+        # ✅ Ensure Extra sheet is loaded into session state
+        if "Extra_sheet_df" not in st.session_state:
+            try:
+                extra_df = pd.read_excel(uploaded, sheet_name="Extra sheet")
+            except Exception:
+                extra_df = pd.DataFrame()
+            st.session_state["Extra_sheet_df"] = extra_df
+
         sheet_options = {
             "Sales Data": st.session_state.get("sales_df", pd.DataFrame()),
             "YTD": st.session_state.get("ytd_df", pd.DataFrame()),
@@ -1706,33 +1714,33 @@ elif choice == "Custom Analysis":
             "Sales Channels": st.session_state.get("channels_df", pd.DataFrame()),
             "Extra sheet": st.session_state.get("Extra_sheet_df", pd.DataFrame())
         }
-        selected_sheet_name = st.selectbox("📑 Select Sheet for Analysis", list(sheet_options.keys()))
+
+        selected_sheet_name = st.selectbox(texts[lang]["custom_select_sheet"], list(sheet_options.keys()))
         df = sheet_options[selected_sheet_name]
 
         if df.empty:
-            st.warning(f"⚠️ The sheet '{selected_sheet_name}' is empty or not available in your file.")
+            st.warning(texts[lang]["custom_sheet_empty"].format(selected_sheet_name))
         else:
-            st.subheader("💡 Explore your data by multiple columns & compare two periods.")
+            st.subheader(texts[lang]["custom_explore"])
 
             available_cols = list(df.columns)
-
-            group_cols = st.multiselect("Group by columns", available_cols)
-            value_col = st.selectbox("Value to analyze", available_cols)
+            group_cols = st.multiselect(texts[lang]["custom_group_cols"], available_cols)
+            value_col = st.selectbox(texts[lang]["custom_value_col"], available_cols)
 
             if "Billing Date" in df.columns:
-                st.subheader("📆 Select Two Periods")
+                st.subheader(texts[lang]["custom_periods_sub"])
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write("Period 1")
+                    st.write(texts[lang]["custom_period1"])
                     period1_range = st.date_input(
-                        "Select Period 1",
+                        texts[lang]["custom_select_p1"],
                         [df["Billing Date"].min(), df["Billing Date"].max()],
                         key="ca_p1_range"
                     )
                 with col2:
-                    st.write("Period 2")
+                    st.write(texts[lang]["custom_period2"])
                     period2_range = st.date_input(
-                        "Select Period 2",
+                        texts[lang]["custom_select_p2"],
                         [df["Billing Date"].min(), df["Billing Date"].max()],
                         key="ca_p2_range"
                     )
@@ -1754,11 +1762,13 @@ elif choice == "Custom Analysis":
                 comparison_df = pd.merge(summary_p1, summary_p2, on=group_cols, how="outer").fillna(0)
                 comparison_df["Difference"] = comparison_df["Period 2"] - comparison_df["Period 1"]
 
-                st.subheader(f"📋 Comparison of {value_col} by {', '.join(group_cols)}")
+                st.subheader(texts[lang]["custom_comparison_sub"].format(value_col, ", ".join(group_cols)))
                 styled_custom = (
                     comparison_df.style
                     .set_table_styles([
-                        {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'), ('font-weight', '800'), ('height', '40px'), ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                        {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
+                                                    ('font-weight', '800'), ('height', '40px'),
+                                                    ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
                     ])
                     .format({
                         "Period 1": "{:,.0f}",
@@ -1779,7 +1789,7 @@ elif choice == "Custom Analysis":
                 st.plotly_chart(fig, use_container_width=True)
 
                 if st.download_button(
-                    "⬇️ Download Comparison (Excel)",
+                    texts[lang]["custom_download"],
                     data=to_excel_bytes(comparison_df, sheet_name="Custom_Comparison", index=False),
                     file_name=f"Custom_Comparison_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -1791,7 +1801,7 @@ elif choice == "Custom Analysis":
                         "timestamp": datetime.now()
                     })
             else:
-                st.info("👉 Please select at least one group column, one value column, and valid date ranges.")
+                st.info(texts[lang]["custom_select_prompt"])
 
 # --- SP/PY Target Allocation Page ---
 elif choice == "SP/PY Target Allocation":
