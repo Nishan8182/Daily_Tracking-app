@@ -1784,10 +1784,13 @@ elif choice == texts[lang]["custom_analysis"]:
 
                 # --- Plotly Chart Fix ---
                 df_plot = comparison_df.sort_values(by="Period 2", ascending=False).copy()
-                if len(group_cols) > 1:
+
+                if len(group_cols) == 1:
+                    df_plot["Group"] = df_plot[group_cols[0]].astype(str)
+                elif len(group_cols) > 1:
                     df_plot["Group"] = df_plot[group_cols].astype(str).agg(" | ".join, axis=1)
                 else:
-                    df_plot["Group"] = df_plot[group_cols[0]]
+                    df_plot["Group"] = "All Data"
 
                 df_plot_melted = df_plot.melt(
                     id_vars=["Group"],
@@ -1802,7 +1805,7 @@ elif choice == texts[lang]["custom_analysis"]:
                     y="Value",
                     color="Period",
                     barmode="group",
-                    title=f"Comparison of {value_col} by {', '.join(group_cols)}",
+                    title=f"Comparison of {value_col} by {', '.join(group_cols) if group_cols else 'All'}",
                     color_discrete_sequence=px.colors.qualitative.Set2
                 )
                 st.plotly_chart(fig, use_container_width=True)
