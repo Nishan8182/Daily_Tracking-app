@@ -1707,6 +1707,7 @@ elif choice == texts[lang]["custom_analysis"]:
                 extra_df = pd.DataFrame()
             st.session_state["Extra_sheet_df"] = extra_df
 
+        # Available sheet options
         sheet_options = {
             "Sales Data": st.session_state.get("sales_df", pd.DataFrame()),
             "YTD": st.session_state.get("ytd_df", pd.DataFrame()),
@@ -1749,16 +1750,19 @@ elif choice == texts[lang]["custom_analysis"]:
                 st.info("⚠️ No 'Billing Date' column found. Period comparison disabled.")
 
             if group_cols and value_col and period1_range and period2_range and len(period1_range) == 2 and len(period2_range) == 2:
+                # --- Period 1 ---
                 p1_start, p1_end = pd.to_datetime(period1_range[0]), pd.to_datetime(period1_range[1])
                 df_p1 = df[(df["Billing Date"] >= p1_start) & (df["Billing Date"] <= p1_end)]
                 summary_p1 = df_p1.groupby(group_cols)[value_col].sum().reset_index()
                 summary_p1.rename(columns={value_col: "Period 1"}, inplace=True)
 
+                # --- Period 2 ---
                 p2_start, p2_end = pd.to_datetime(period2_range[0]), pd.to_datetime(period2_range[1])
                 df_p2 = df[(df["Billing Date"] >= p2_start) & (df["Billing Date"] <= p2_end)]
                 summary_p2 = df_p2.groupby(group_cols)[value_col].sum().reset_index()
                 summary_p2.rename(columns={value_col: "Period 2"}, inplace=True)
 
+                # --- Merge & Compare ---
                 comparison_df = pd.merge(summary_p1, summary_p2, on=group_cols, how="outer").fillna(0)
                 comparison_df["Difference"] = comparison_df["Period 2"] - comparison_df["Period 1"]
 
@@ -1778,16 +1782,32 @@ elif choice == texts[lang]["custom_analysis"]:
                 )
                 st.dataframe(styled_custom, use_container_width=True)
 
+                # --- Plotly Chart Fix ---
+                df_plot = comparison_df.sort_values(by="Period 2", ascending=False).copy()
+                if len(group_cols) > 1:
+                    df_plot["Group"] = df_plot[group_cols].astype(str).agg(" | ".join, axis=1)
+                else:
+                    df_plot["Group"] = df_plot[group_cols[0]]
+
+                df_plot_melted = df_plot.melt(
+                    id_vars=["Group"],
+                    value_vars=["Period 1", "Period 2"],
+                    var_name="Period",
+                    value_name="Value"
+                )
+
                 fig = px.bar(
-                    comparison_df.sort_values(by="Period 2", ascending=False),
-                    x=group_cols[0] if len(group_cols) == 1 else comparison_df[group_cols].astype(str).agg(" | ".join, axis=1),
-                    y=["Period 1", "Period 2"],
+                    df_plot_melted,
+                    x="Group",
+                    y="Value",
+                    color="Period",
                     barmode="group",
                     title=f"Comparison of {value_col} by {', '.join(group_cols)}",
                     color_discrete_sequence=px.colors.qualitative.Set2
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
+                # --- Download ---
                 if st.download_button(
                     texts[lang]["custom_download"],
                     data=to_excel_bytes(comparison_df, sheet_name="Custom_Comparison", index=False),
