@@ -862,7 +862,698 @@ if choice == texts[lang]["home"]:
     if "data_loaded" in st.session_state: st.success(texts[lang]["data_loaded_msg"])
     else: st.info(texts[lang]["upload_prompt"])
 
+
 # --- Sales Tracking Page ---
+elif choice == texts[lang]["sales_tracking"]:
+    st.title(texts[lang]["sales_tracking_title"])
+    if "data_loaded" not in st.session_state:
+        st.warning(texts[lang]["no_data_warning"])
+    else:
+        # Filters
+        st.sidebar.subheader(texts[lang]["filters_header"])
+        st.sidebar.markdown(f'<div class="tooltip">ℹ️<span class="tooltiptext">{texts[lang]["filters_tooltip"]}</span></div>', unsafe_allow_html=True)
+        salesmen = st.sidebar.multiselect(
+            texts[lang]["select_salesmen"],
+            options=sorted(sales_df["Driver Name EN"].dropna().unique()),
+            default=sorted(sales_df["Driver Name EN"].dropna().unique()),
+            key="st_salesmen"
+        )
+        billing_types = st.sidebar.multiselect(
+            texts[lang]["select_billing_types"],
+            options=sorted(sales_df["Billing Type"].dropna().unique()),
+            default=sorted(sales_df["Billing Type"].dropna().unique()),
+            key="st_billing_types"
+        )
+        py_filter = st.sidebar.multiselect(
+            texts[lang]["select_py"],
+            options=sorted(sales_df["PY Name 1"].dropna().unique()),
+            default=sorted(sales_df["PY Name 1"].dropna().unique()),
+            key="st_py_filter"
+        )
+        sp_filter = st.sidebar.multiselect(
+            texts[lang]["select_sp"],
+            options=sorted(sales_df["SP Name1"].dropna().unique()),
+            default=sorted(sales_df["SP Name1"].dropna().unique()),
+            key="st_sp_filter"
+        )
+
+        preset = st.sidebar.radio(texts[lang]["date_presets"], texts[lang]["date_presets_options"], key="st_preset")
+        today = pd.Timestamp.today().normalize()
+        if preset == texts[lang]["date_presets_options"][1]:  # Last 7 Days
+            date_range = [today - pd.Timedelta(days=7), today]
+        elif preset == texts[lang]["date_presets_options"][2]:  # This Month
+            month_start = today.replace(day=1)
+            month_end = month_start + pd.offsets.MonthEnd(0)
+            date_range = [month_start, month_end]
+        elif preset == texts[lang]["date_presets_options"][3]:  # YTD
+            date_range = [today.replace(month=1, day=1), today]
+        else:
+            date_range = st.sidebar.date_input(
+                texts[lang]["select_date_range"],
+                [sales_df["Billing Date"].min(), sales_df["Billing Date"].max()],
+                key="st_date_range"
+            )
+            if isinstance(date_range, tuple) and len(date_range) == 2:
+                date_range = [pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])]
+            else:
+                date_range = [sales_df["Billing Date"].min(), sales_df["Billing Date"].max()]
+
+        if date_range[0] > date_range[1]:
+            st.error(texts[lang]["date_error"])
+        else:
+            top_n = st.sidebar.slider(
+                texts[lang]["top_n_salesmen"],
+                min_value=1,
+                max_value=max(1, len(sales_df["Driver Name EN"].dropna().unique())),
+                value=min(5, max(1, len(sales_df["Driver Name EN"].dropna().unique()))),
+                key="st_topn"
+            )
+
+            df_filtered = sales_df[
+                (sales_df["Driver Name EN"].isin(salesmen))
+                & (sales_df["Billing Type"].isin(billing_types))
+                & (sales_df["Billing Date"] >= date_range[0])
+                & (sales_df["Billing Date"] <= date_range[1])
+                & (sales_df["PY Name 1"].isin(py_filter))
+                & (sales_df["SP Name1"].isin(sp_filter))
+            ].copy()
+
+            if df_filtered.empty:
+                st.warning(texts[lang]["no_match_warning"])
+            else:
+                billing_start = df_filtered["Billing Date"].min().normalize()
+                billing_end = df_filtered["Billing Date"].max().normalize()
+                all_days = pd.date_range(billing_start, billing_end, freq="D")
+                days_finish = int(sum(1 for d in all_days if d.weekday() != 4))
+
+                current_month_start = today.replace(day=1)
+                current_month_end = current_month_start + pd.offsets.MonthEnd(0)
+                month_days = pd.date_range(current_month_start, current_month_end, freq="D")
+                working_days_current_month = int(sum(1 for d in month_days if d.weekday() != 4))
+
+                # --- Base aggregates ---
+                total_sales = df_filtered.groupby("Driver Name EN")["Net Value"].sum()
+                talabat_df = df_filtered[df_filtered["PY Name 1"] == "STORES SERVICES KUWAIT CO."]
+                talabat_sales = talabat_df.groupby("Driver Name EN")["Net Value"].sum()
+
+                ka_targets = target_df.set_index("Driver Name EN")["KA Target"] if "KA Target" in target_df.columns else pd.Series(dtype=float)
+                talabat_targets = target_df.set_index("Driver Name EN")["Talabat Target"] if "Talabat Target" in target_df.columns else pd.Series(dtype=float)
+
+                all_salesmen_idx = total_sales.index.union(talabat_sales.index).union(ka_targets.index).union(talabat_targets.index)
+                total_sales = total_sales.reindex(all_salesmen_idx, fill_value=0).astype(float)
+                talabat_sales = talabat_sales.reindex(all_salesmen_idx, fill_value=0).astype(float)
+                ka_targets = ka_targets.reindex(all_salesmen_idx, fill_value=0).astype(float)
+                talabat_targets = talabat_targets.reindex(all_salesmen_idx, fill_value=0).astype(float)
+
+                ka_gap = (ka_targets - total_sales).clip(lower=0)
+                talabat_gap = (talabat_targets - talabat_sales).clip(lower=0)
+
+                top_salesmen = total_sales.sort_values(ascending=False).head(top_n).index
+                total_sales_top = total_sales.loc[top_salesmen]
+                talabat_sales_top = talabat_sales.loc[top_salesmen]
+                ka_gap_top = ka_gap.loc[top_salesmen]
+                talabat_gap_top = talabat_gap.loc[top_salesmen]
+
+                total_ka_target_all = float(ka_targets.sum())
+                total_tal_target_all = float(talabat_targets.sum())
+                per_day_ka_target = (total_ka_target_all / working_days_current_month) if working_days_current_month > 0 else 0
+                current_sales_per_day = (total_sales.sum() / days_finish) if days_finish > 0 else 0
+                forecast_month_end_ka = current_sales_per_day * working_days_current_month
+
+                # --- Channels mapping: Market (Retail) vs E-com ---
+                df_py_sales = df_filtered.groupby("_py_name_norm")["Net Value"].sum().reset_index()
+                df_channels_merged = df_py_sales.merge(
+                    channels_df[["_py_name_norm", "Channels"]],
+                    on="_py_name_norm",
+                    how="left"
+                )
+                df_channels_merged["Channels"] = df_channels_merged["Channels"].str.strip().str.lower().fillna("uncategorized")
+                channel_sales = df_channels_merged.groupby("Channels")["Net Value"].sum()
+                total_retail_sales = float(channel_sales.get("market", 0.0) + channel_sales.get("uncategorized", 0.0))
+                total_ecom_sales = float(channel_sales.get("e-com", 0.0))
+                total_channel_sales = total_retail_sales + total_ecom_sales
+                retail_sales_pct = (total_retail_sales / total_channel_sales * 100) if total_channel_sales > 0 else 0
+                ecom_sales_pct = (total_ecom_sales / total_channel_sales * 100) if total_channel_sales > 0 else 0
+
+                # --- KA & Other E-com Calculation ---
+                ka_other_ecom_sales = total_sales.sum() - talabat_sales.sum()
+                ka_other_ecom_pct = (ka_other_ecom_sales / total_ka_target_all * 100) if total_ka_target_all > 0 else 0
+
+                # --- KPI Data for PPTX ---
+                kpi_data = {
+                    texts[lang]["ka_target"]: f"KD {total_ka_target_all:,.0f}",
+                    texts[lang]["talabat_target"]: f"KD {total_tal_target_all:,.0f}",
+                    texts[lang]["ka_gap"]: f"KD {(total_ka_target_all - total_sales.sum()):,.0f}",
+                    "Total Talabat Gap": f"KD {talabat_gap.sum():,.0f}",
+                    texts[lang]["total_ka_sales"]: f"KD {total_sales.sum():,.0f} ({((total_sales.sum() / total_ka_target_all) * 100):.0f}%)" if total_ka_target_all else f"KD {total_sales.sum():,.0f} (0%)",
+                    "Total Talabat Sales": f"KD {talabat_sales.sum():,.0f} ({((talabat_sales.sum() / total_tal_target_all) * 100):.0f}%)" if total_tal_target_all else f"KD {talabat_sales.sum():,.0f} (0%)",
+                    texts[lang]["ka_other_ecom"]: f"KD {ka_other_ecom_sales:,.0f} ({ka_other_ecom_pct:.0f}%)",
+                    texts[lang]["retail_sales"]: f"KD {total_retail_sales:,.0f} ({retail_sales_pct:.0f}%)",
+                    texts[lang]["ecom_sales"]: f"KD {total_ecom_sales:,.0f} ({ecom_sales_pct:.0f}%)",
+                    texts[lang]["days_finished"]: f"{days_finish}",
+                    "Per Day KA Target": f"KD {per_day_ka_target:,.0f}",
+                    texts[lang]["current_sales_per_day"]: f"KD {current_sales_per_day:,.0f}",
+                    texts[lang]["forecast_month_end"]: f"KD {forecast_month_end_ka:,.0f}"
+                }
+
+                tabs = st.tabs([texts[lang]["kpis_tab"], texts[lang]["tables_tab"], texts[lang]["charts_tab"], texts[lang]["downloads_tab"]])
+
+                # --- KPIs with progress bars ---
+                with tabs[0]:
+                    st.subheader(texts[lang]["key_metrics_sub"])
+                    r1c1 = st.columns(1)[0]
+                    with r1c1:
+                        st.metric(texts[lang]["total_ka_sales"], f"KD {total_sales.sum():,.0f}")
+                        progress_pct_ka = (total_sales.sum() / total_ka_target_all * 100) if total_ka_target_all > 0 else 0
+                        st.markdown(create_progress_bar_html(progress_pct_ka), unsafe_allow_html=True)
+                        st.markdown(f'<div class="green-caption">{texts[lang]["of_ka_target"].format(progress_pct_ka)}</div>', unsafe_allow_html=True)
+
+                    r2c1, r2c2 = st.columns(2)
+                    with r2c1:
+                        st.metric(texts[lang]["ka_other_ecom"], f"KD {ka_other_ecom_sales:,.0f}")
+                        st.markdown(create_progress_bar_html(ka_other_ecom_pct), unsafe_allow_html=True)
+                        st.markdown(f'<div class="green-caption">{texts[lang]["of_ka_target_pct"].format(ka_other_ecom_pct)}</div>', unsafe_allow_html=True)
+                    with r2c2:
+                        st.metric(texts[lang]["talabat_sales"], f"KD {talabat_sales.sum():,.0f}")
+                        progress_pct_talabat = (talabat_sales.sum() / total_tal_target_all * 100) if total_tal_target_all > 0 else 0
+                        st.markdown(create_progress_bar_html(progress_pct_talabat), unsafe_allow_html=True)
+                        st.markdown(f'<div class="green-caption">{texts[lang]["of_talabat_target"].format(progress_pct_talabat)}</div>', unsafe_allow_html=True)
+
+                    st.subheader(texts[lang]["target_overview_sub"])
+                    r3c1, r3c2, r3c3, r3c4 = st.columns(4)
+                    r3c1.metric(texts[lang]["ka_target"], f"KD {total_ka_target_all:,.0f}")
+                    r3c2.metric(texts[lang]["talabat_target"], f"KD {total_tal_target_all:,.0f}")
+                    r3c3.metric(texts[lang]["ka_gap"], f"KD {(total_ka_target_all - total_sales.sum()):,.0f}")
+                    r3c4.metric(texts[lang]["talabat_gap"], f"KD {talabat_gap.sum():,.0f}")
+
+                    st.subheader(texts[lang]["channel_sales_sub"])
+                    r4c1, r4c2 = st.columns(2)
+                    with r4c1:
+                        st.metric(texts[lang]["retail_sales"], f"KD {total_retail_sales:,.0f}")
+                        retail_contribution_pct = (total_retail_sales / total_sales.sum() * 100) if total_sales.sum() > 0 else 0
+                        st.caption(texts[lang]["of_total_ka"].format(retail_contribution_pct))
+                    with r4c2:
+                        st.metric(texts[lang]["ecom_sales"], f"KD {total_ecom_sales:,.0f}")
+                        ecom_contribution_pct = (total_ecom_sales / total_sales.sum() * 100) if total_sales.sum() > 0 else 0
+                        st.caption(texts[lang]["of_total_ka"].format(ecom_contribution_pct))
+
+                    st.subheader(texts[lang]["performance_metrics_sub"])
+                    r5c1, r5c2, r5c3 = st.columns(3)
+                    r5c1.metric(texts[lang]["days_finished"], days_finish)
+                    r5c2.metric(texts[lang]["current_sales_per_day"], f"KD {current_sales_per_day:,.0f}")
+                    r5c3.metric(texts[lang]["forecast_month_end"], f"KD {forecast_month_end_ka:,.0f}")
+
+                    # --- TABLES ---
+                    with tabs[1]:
+                        # --- Sales & Targets Summary ---
+                        st.subheader(texts[lang]["sales_targets_summary_sub"])
+                        report_df = pd.DataFrame({
+                            "Salesman": ka_targets.index,
+                            "KA Target": ka_targets.values,
+                            "KA Sales": total_sales.values,
+                            "KA Remaining": ka_gap.values,
+                            "KA % Achieved": np.where(ka_targets.values != 0, (total_sales.values / ka_targets.values * 100).round(0), 0),
+                            "Talabat Target": talabat_targets.values,
+                            "Talabat Sales": talabat_sales.values,
+                            "Talabat Remaining": talabat_gap.values,
+                            "Talabat % Achieved": np.where(talabat_targets.values != 0, (talabat_sales.values / talabat_targets.values * 100).round(0), 0)
+                        })
+
+                        total_row = report_df.sum(numeric_only=True).to_frame().T
+                        total_row.index = ["Total"]
+                        total_row["KA % Achieved"] = round(total_row["KA Sales"]/total_row["KA Target"]*100,0) if total_row["KA Target"].iloc[0]!=0 else 0
+                        total_row["Talabat % Achieved"] = round(total_row["Talabat Sales"]/total_row["Talabat Target"]*100,0) if total_row["Talabat Target"].iloc[0]!=0 else 0
+
+                        total_row = total_row.reset_index(drop=True)
+                        total_row["Salesman"] = "Total"
+                        total_row = total_row[report_df.columns]
+                        report_df_with_total = pd.concat([report_df, total_row], ignore_index=True)
+
+                        def highlight_total_row(row):
+                            return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row['Salesman'] == "Total" else '' for _ in row]
+
+                        styled_report = (
+                            report_df_with_total.style
+                            .set_table_styles([
+                                {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
+                                                            ('font-weight', '800'), ('height', '40px'),
+                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                            ])
+                            .apply(highlight_total_row, axis=1)
+                            .format("{:,.0f}", subset=["KA Target","KA Sales","KA Remaining",
+                                                    "Talabat Target","Talabat Sales","Talabat Remaining"])
+                            .format("{:.0f}%", subset=["KA % Achieved","Talabat % Achieved"])
+                        )
+                        st.dataframe(styled_report, use_container_width=True, hide_index=True)
+                        if st.download_button(
+                            texts[lang]["download_sales_targets"],
+                            data=to_excel_bytes(report_df_with_total, sheet_name="Sales_Targets_Summary", index=False),
+                            file_name=f"Sales_Targets_Summary_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        ):
+                            st.session_state["audit_log"].append({
+                                "user": username,
+                                "action": "download",
+                                "details": "Sales & Targets Summary Excel",
+                                "timestamp": datetime.now()
+                            })
+
+                        # --- Sales by Billing Type per Salesman ---
+                        st.subheader(texts[lang]["sales_by_billing_sub"])
+                        billing_wide = df_filtered.pivot_table(
+                            index="Driver Name EN",
+                            columns="Billing Type",
+                            values="Net Value",
+                            aggfunc="sum",
+                            fill_value=0
+                        )
+
+                        required_cols_raw = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
+                        billing_wide = billing_wide.reindex(columns=required_cols_raw, fill_value=0)
+                        display_df = billing_wide.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
+                        display_df["Sales Total"] = billing_wide.sum(axis=1)
+                        display_df["Return"] = billing_wide["YKRE"] + billing_wide["ZRE"]
+                        display_df["Return %"] = np.where(display_df["Sales Total"] != 0,
+                                                        (display_df["Return"] / display_df["Sales Total"] * 100).round(0), 0)
+                        display_df["Cancel Total"] = billing_wide[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
+                        ordered_cols = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
+                                        "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
+                        display_df = display_df.reindex(columns=ordered_cols, fill_value=0)
+
+                        total_row = pd.DataFrame(display_df.sum(numeric_only=True)).T
+                        total_row.index = ["Total"]
+                        total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100), 0) if total_row["Sales Total"].iloc[0] != 0 else 0
+                        billing_df = pd.concat([display_df, total_row])
+                        billing_df.index.name = "Salesman"
+
+                        def highlight_total_row_billing(row):
+                            return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
+
+                        styled_billing = (
+                            billing_df.style
+                            .set_table_styles([
+                                {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
+                                                            ('font-weight', '800'), ('height', '40px'),
+                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                            ])
+                            .apply(highlight_total_row_billing, axis=1)
+                            .format({
+                                "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
+                                "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
+                                "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
+                            })
+                        )
+                        st.dataframe(styled_billing, use_container_width=True, hide_index=False)
+                        if st.download_button(
+                            texts[lang]["download_billing"],
+                            data=to_excel_bytes(billing_df.reset_index(), sheet_name="Billing_Types", index=False),
+                            file_name=f"Billing_Types_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        ):
+                            st.session_state["audit_log"].append({
+                                "user": username,
+                                "action": "download",
+                                "details": "Billing Type Table Excel",
+                                "timestamp": datetime.now()
+                            })
+
+                        # --- Sales by PY Name 1 ---
+                        st.subheader(texts[lang]["sales_by_py_sub"])
+                        py_table = df_filtered.groupby("PY Name 1")["Net Value"].sum().sort_values(ascending=False).to_frame(name="Sales")
+                        py_table["Contribution %"] = np.where(py_table["Sales"] != 0,
+                                                            (py_table["Sales"]/py_table["Sales"].sum()*100).round(0), 0)
+
+                        total_row = py_table.sum(numeric_only=True).to_frame().T
+                        total_row.index = ["Total"]
+                        py_table_with_total = pd.concat([py_table, total_row])
+                        py_table_with_total.index.name = "PY Name 1"
+
+                        def highlight_total_row_py(row):
+                            return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
+
+                        styled_py = (
+                            py_table_with_total.style
+                            .set_table_styles([
+                                {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
+                                                            ('font-weight', '800'), ('height', '40px'),
+                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                            ])
+                            .apply(highlight_total_row_py, axis=1)
+                            .format("{:,.0f}", subset=["Sales"])
+                            .format("{:.0f}%", subset=["Contribution %"])
+                        )
+                        st.dataframe(styled_py, use_container_width=True, hide_index=False)
+                        if st.download_button(
+                            texts[lang]["download_py"],
+                            data=to_excel_bytes(py_table_with_total.reset_index(), sheet_name="Sales_by_PY_Name", index=False),
+                            file_name=f"Sales_by_PY_Name_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        ):
+                            st.session_state["audit_log"].append({
+                                "user": username,
+                                "action": "download",
+                                "details": "PY Name Table Excel",
+                                "timestamp": datetime.now()
+                            })
+
+                        # --- Return by PY Name 1 ---
+                        st.subheader("🔄 Return by PY Name 1")
+                        py_billing = df_filtered.pivot_table(
+                            index="PY Name 1",
+                            columns="Billing Type",
+                            values="Net Value",
+                            aggfunc="sum",
+                            fill_value=0
+                        )
+
+                        py_billing = py_billing.reindex(columns=required_cols_raw, fill_value=0)
+                        py_billing["Sales Total"] = py_billing.sum(axis=1)
+                        py_billing["Return"] = py_billing["YKRE"] + py_billing["ZRE"]
+                        py_billing["Cancel Total"] = py_billing[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
+
+                        # Reorder columns like Sales by Billing table
+                        ordered_cols = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
+                                        "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
+                        # Map the original column names to the ordered display names
+                        py_billing = py_billing.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
+                        py_billing["Return %"] = np.where(py_billing["Sales Total"] != 0,
+                                                        (py_billing["Return"] / py_billing["Sales Total"] * 100).round(0), 0)
+                        py_billing = py_billing.reindex(columns=ordered_cols, fill_value=0).astype(int)
+
+                        # Add total row
+                        total_row = pd.DataFrame(py_billing.sum(numeric_only=True)).T
+                        total_row.index = ["Total"]
+                        total_row["Return %"] = round((total_row["Return"]/total_row["Sales Total"]*100), 0) if total_row["Sales Total"].iloc[0]!=0 else 0
+                        py_billing = pd.concat([py_billing, total_row])
+
+                        def highlight_total_row_py_return(row):
+                            return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
+
+                        styled_py_return = (
+                            py_billing.style
+                            .set_table_styles([
+                                {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
+                                                            ('font-weight', '800'), ('height', '40px'),
+                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                            ])
+                            .apply(highlight_total_row_py_return, axis=1)
+                            .format({
+                                "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
+                                "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
+                                "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
+                            })
+                        )
+                        st.dataframe(styled_py_return, use_container_width=True, hide_index=False)
+
+                        # --- Return by SP Name1 ---
+                        st.subheader("🔄 Return by SP Name1")
+                        sp_billing = df_filtered.pivot_table(
+                            index="SP Name1",
+                            columns="Billing Type",
+                            values="Net Value",
+                            aggfunc="sum",
+                            fill_value=0
+                        )
+
+                        sp_billing = sp_billing.reindex(columns=required_cols_raw, fill_value=0)
+                        sp_billing["Sales Total"] = sp_billing.sum(axis=1)
+                        sp_billing["Return"] = sp_billing["YKRE"] + sp_billing["ZRE"]
+                        sp_billing["Cancel Total"] = sp_billing[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
+
+                        # Reorder and rename like Sales by Billing table
+                        sp_billing = sp_billing.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
+                        sp_billing["Return %"] = np.where(sp_billing["Sales Total"] != 0,
+                                                        (sp_billing["Return"] / sp_billing["Sales Total"] * 100).round(0), 0)
+                        sp_billing = sp_billing.reindex(columns=ordered_cols, fill_value=0).astype(int)
+
+                        # Add total row
+                        total_row = pd.DataFrame(sp_billing.sum(numeric_only=True)).T
+                        total_row.index = ["Total"]
+                        total_row["Return %"] = round((total_row["Return"]/total_row["Sales Total"]*100), 0) if total_row["Sales Total"].iloc[0]!=0 else 0
+                        sp_billing = pd.concat([sp_billing, total_row])
+
+                        def highlight_total_row_sp_return(row):
+                            return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
+
+                        styled_sp_return = (
+                            sp_billing.style
+                            .set_table_styles([
+                                {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
+                                                            ('font-weight', '800'), ('height', '40px'),
+                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                            ])
+                            .apply(highlight_total_row_sp_return, axis=1)
+                            .format({
+                                "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
+                                "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
+                                "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
+                            })
+                        )
+                        st.dataframe(styled_sp_return, use_container_width=True, hide_index=False)
+
+                        # --- Return by Material Description ---
+                        st.subheader("🔄 Return by Material Description")
+                        if "Material Description" in df_filtered.columns:
+                            material_billing = df_filtered.pivot_table(
+                                index="Material Description",
+                                columns="Billing Type",
+                                values="Net Value",
+                                aggfunc="sum",
+                                fill_value=0
+                            )
+
+                            # safe column list for billing codes
+                            material_cols_raw = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
+                            material_billing = material_billing.reindex(columns=material_cols_raw, fill_value=0)
+                            material_billing["Sales Total"] = material_billing.sum(axis=1)
+                            material_billing["Return"] = material_billing["YKRE"] + material_billing["ZRE"]
+                            material_billing["Cancel Total"] = material_billing[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
+
+                            # rename for display
+                            material_billing = material_billing.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
+                            material_billing["Return %"] = np.where(material_billing["Sales Total"] != 0,
+                                                                    (material_billing["Return"] / material_billing["Sales Total"] * 100).round(0), 0)
+
+                            ordered_cols_material = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
+                                                     "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
+                            material_billing = material_billing.reindex(columns=ordered_cols_material, fill_value=0)
+
+                            # ensure numeric and handle possible non-int values
+                            for col in material_billing.columns:
+                                if col != "Return %":
+                                    material_billing[col] = pd.to_numeric(material_billing[col], errors="coerce").fillna(0)
+
+                            # Add total row
+                            total_row = pd.DataFrame(material_billing.sum(numeric_only=True)).T
+                            total_row.index = ["Total"]
+                            total_row["Return %"] = round((total_row["Return"]/total_row["Sales Total"]*100), 0) if total_row["Sales Total"].iloc[0] != 0 else 0
+                            material_billing = pd.concat([material_billing, total_row])
+
+                            def highlight_total_row_material(row):
+                                return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
+
+                            styled_material = (
+                                material_billing.style
+                                .set_table_styles([
+                                    {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
+                                                                ('font-weight', '800'), ('height', '40px'),
+                                                                ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                                ])
+                                .apply(highlight_total_row_material, axis=1)
+                                .format({
+                                    "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
+                                    "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
+                                    "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
+                                })
+                            )
+                            st.dataframe(styled_material, use_container_width=True, hide_index=False)
+
+                            # download button for material table
+                            if st.download_button(
+                                texts[lang].get("download_material", "Download Return by Material Description"),
+                                data=to_excel_bytes(material_billing.reset_index(), sheet_name="Return_by_Material", index=False),
+                                file_name=f"Return_by_Material_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            ):
+                                st.session_state["audit_log"].append({
+                                    "user": username,
+                                    "action": "download",
+                                    "details": "Return by Material Description Excel",
+                                    "timestamp": datetime.now()
+                                })
+                        else:
+                            st.info("No 'Material Description' column found in data — skipping Material Description table.")
+
+                # --- CHARTS ---
+                with tabs[2]:
+                    st.subheader(texts[lang]["daily_sales_trend_sub"])
+                    df_time = df_filtered.groupby(pd.Grouper(key="Billing Date", freq="D"))["Net Value"].sum().reset_index()
+                    df_time.rename(columns={"Billing Date": "ds", "Net Value": "y"}, inplace=True)
+
+                    if len(df_time) > 1:
+                        try:
+                            m = Prophet()
+                            m.fit(df_time)
+                            future = m.make_future_dataframe(periods=30)
+                            forecast = m.predict(future)
+
+                            fig_trend = go.Figure()
+                            fig_trend.add_trace(go.Scatter(x=df_time["ds"], y=df_time["y"], mode='lines+markers', name='Actual Sales', line=dict(color='#1E3A8A', width=3)))
+                            fig_trend.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat"], mode='lines', name='Prophet Forecast', line=dict(color='#3B82F6', width=2, dash='dash')))
+                        except Exception:
+                            fig_trend = go.Figure()
+                            fig_trend.add_trace(go.Scatter(x=df_time["ds"], y=df_time["y"], mode='lines+markers', name='Actual Sales'))
+
+                        df_time['y_mean'] = df_time['y'].rolling(window=7).mean()
+                        df_time['y_std'] = df_time['y'].rolling(window=7).std()
+                        df_time['upper_bound'] = df_time['y_mean'] + 2 * df_time['y_std']
+                        df_time['lower_bound'] = df_time['y_mean'] - 2 * df_time['y_std']
+                        df_time['anomaly'] = np.where((df_time['y'] > df_time['upper_bound']) | (df_time['y'] < df_time['lower_bound']), df_time['y'], np.nan)
+
+                        fig_trend.add_trace(go.Scatter(
+                            x=df_time['ds'], y=df_time['anomaly'],
+                            mode='markers', name='Anomaly',
+                            marker=dict(color='red', size=10, symbol='x')
+                        ))
+
+                        fig_trend.update_layout(
+                            title=texts[lang]["daily_sales_title"],
+                            xaxis_title="Date",
+                            yaxis_title="Net Value (KD)",
+                            font=dict(family="Roboto", size=12),
+                            plot_bgcolor="#F3F4F6",
+                            paper_bgcolor="#F3F4F6",
+                            hovermode="x unified"
+                        )
+                        st.plotly_chart(fig_trend, use_container_width=True)
+                    else:
+                        st.info(texts[lang]["not_enough_data"])
+
+                    st.subheader(texts[lang]["market_vs_ecom_sub"])
+                    market_ecom_df = pd.DataFrame({
+                        "Channel": ["Market (In-Store & Other)", "E-com (Talabat)"],
+                        "Sales": [total_retail_sales, total_ecom_sales]
+                    })
+                    fig_channel = px.pie(
+                        market_ecom_df,
+                        values="Sales",
+                        names="Channel",
+                        title=texts[lang]["market_vs_ecom_title"],
+                        hole=0.4,
+                        color_discrete_sequence=px.colors.sequential.Bluered_r
+                    )
+                    fig_channel.update_traces(textposition='inside', textinfo='percent+label')
+                    fig_channel.update_layout(font=dict(family="Roboto", size=12), showlegend=True)
+                    st.plotly_chart(fig_channel, use_container_width=True)
+
+                    st.subheader(texts[lang]["daily_ka_target_sub"])
+                    df_time_target = df_filtered.groupby(pd.Grouper(key="Billing Date", freq="D"))["Net Value"].sum().reset_index()
+                    df_time_target.rename(columns={"Billing Date": "Date", "Net Value": "Sales"}, inplace=True)
+                    df_time_target = df_time_target.sort_values("Date").reset_index(drop=True)
+                    df_time_target["Daily KA Target"] = per_day_ka_target
+
+                    fig_target_trend = go.Figure()
+                    fig_target_trend.add_trace(go.Scatter(
+                        x=df_time_target["Date"], y=df_time_target["Sales"],
+                        mode='lines+markers', name="Actual Sales", line=dict(color='#16A34A', width=3)
+                    ))
+                    fig_target_trend.add_trace(go.Scatter(
+                        x=df_time_target["Date"], y=df_time_target["Daily KA Target"],
+                        mode='lines', name="Daily KA Target", line=dict(color='#F59E0B', width=2, dash='dot')
+                    ))
+                    fig_target_trend.update_layout(
+                        title=texts[lang]["daily_ka_title"],
+                        xaxis_title="Date",
+                        yaxis_title="Net Value (KD)",
+                        font=dict(family="Roboto", size=12),
+                        plot_bgcolor="#F3F4F6",
+                        paper_bgcolor="#F3F4F6",
+                        hovermode="x unified"
+                    )
+                    st.plotly_chart(fig_target_trend, use_container_width=True)
+
+                    st.subheader(texts[lang]["salesman_ka_sub"])
+                    salesman_target_df = pd.DataFrame({
+                        "Salesman": ka_targets.index,
+                        "KA Target": ka_targets.values,
+                        "KA Sales": total_sales.values
+                    }).reset_index(drop=True)
+
+                    fig_salesman_target = go.Figure()
+                    fig_salesman_target.add_trace(go.Bar(
+                        x=salesman_target_df["Salesman"],
+                        y=salesman_target_df["KA Target"],
+                        name="KA Target",
+                        marker_color="gray",
+                        text=salesman_target_df["KA Target"].apply(lambda x: f"{x:,.0f}"),
+                        textposition="inside",
+                        insidetextanchor="middle",
+                        textfont=dict(color="white", size=12)
+                    ))
+                    fig_salesman_target.add_trace(go.Bar(
+                        x=salesman_target_df["Salesman"],
+                        y=salesman_target_df["KA Sales"],
+                        name="KA Sales",
+                        marker_color=[
+                            "green" if val >= tgt else "red"
+                            for val, tgt in zip(salesman_target_df["KA Sales"], salesman_target_df["KA Target"])
+                        ],
+                        text=salesman_target_df["KA Sales"].apply(lambda x: f"{x:,.0f}"),
+                        textposition="inside",
+                        insidetextanchor="middle",
+                        textfont=dict(color="white", size=12)
+                    ))
+                    fig_salesman_target.update_layout(
+                        title=texts[lang]["salesman_ka_title"],
+                        xaxis_title="Salesman",
+                        yaxis_title="Net Value (KD)",
+                        font=dict(family="Roboto", size=12),
+                        plot_bgcolor="#F3F4F6",
+                        paper_bgcolor="#F3F4F6",
+                        barmode="group",
+                        hovermode="x unified"
+                    )
+                    st.plotly_chart(fig_salesman_target, use_container_width=True)
+
+                    st.subheader(texts[lang]["top10_py_sub"])
+                    py_sales_top10 = py_table.sort_values("Sales", ascending=False).head(10)
+                    fig_top10 = px.bar(
+                        py_sales_top10.reset_index(),
+                        x="PY Name 1",
+                        y="Sales",
+                        title=texts[lang]["top10_py_title"],
+                        color_discrete_sequence=px.colors.sequential.Blues_r
+                    )
+                    fig_top10.update_layout(font=dict(family="Roboto", size=12))
+                    st.plotly_chart(fig_top10, use_container_width=True)
+
+                # --- DOWNLOADS ---
+                with tabs[3]:
+                    st.subheader(texts[lang]["download_reports_sub"])
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button(texts[lang]["generate_pptx"]):
+                            figs_dict = {
+                                "Daily Sales Trend": fig_trend,
+                                "Market vs E-com Sales": fig_channel,
+                                "Daily KA Target vs Actual": fig_target_trend,
+                                "Salesman KA Target vs Actual": fig_salesman_target,
+                                "Top 10 PY Name 1 by Sales": fig_top10
+                            }
+                            pptx_stream = create_pptx(report_df_with_total, billing_df, py_table_with_total, figs_dict, kpi_data)
+                            st.download_button(
+                                texts[lang]["download_pptx"],
+                                pptx_stream,
+                                file_name=f"sales_report_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.pptx",
+                                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                            )
+                            st.session_state["audit_log"].append({
+                                "user": username,
+                                "action": "download",
+                                "details": "PPTX Report",
+                                "timestamp": datetime.now()
+                            })
+
 elif choice == texts[lang]["sales_tracking"]:
     st.title(texts[lang]["sales_tracking_title"])
     if "data_loaded" not in st.session_state:
