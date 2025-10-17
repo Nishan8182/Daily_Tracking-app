@@ -21,7 +21,6 @@ from difflib import SequenceMatcher
 from fuzzywuzzy import fuzz
 from io import BytesIO
 
-
 # --- Language Selector ---
 st.sidebar.header("Language / اللغة")
 language = st.sidebar.selectbox("Choose / اختر", ["English", "العربية"])
@@ -65,6 +64,20 @@ texts = {
         "custom_analysis": "Custom Analysis",
         "target_allocation": "SP/PY Target Allocation",
         "ai_insights": "AI Insights",
+        "customer_insights": "Customer Insights",
+        "customer_insights_title": "Customer Insights Dashboard",
+        "rfm_analysis_sub": "RFM Analysis",
+        "rfm_table_sub": "RFM Table",
+        "rfm_chart_sub": "RFM Visualization",
+        "rfm_no_data": "No data available for RFM analysis.",
+        "rfm_download": "Download RFM Report",
+        "rfm_cohort_sub": "RFM Cohort Analysis",
+        "rfm_cohort_info": "Analyzes how RFM scores evolve over time for customer acquisition cohorts (grouped by first purchase month).",
+        "rfm_cohort_table_sub": "Cohort Summary Table",
+        "rfm_cohort_insights_sub": "Key Insights",
+        "rfm_cohort_download": "Download Cohort Report (Excel)",
+        "rfm_cohort_no_data": "Insufficient data for cohort analysis.",
+        "product_availability_checker": "Product Availability Checker",
         "home_title": "🏠 Haneef Data Dashboard",
         "home_welcome": "**Welcome to your Sales Analytics Hub!**\n- 📈 Track sales & targets by salesman, By Customer Name, By Branch Name\n- 📊 Visualize trends with interactive charts (now with advanced forecasting)\n- 💾 Download reports in PPTX & Excel\n- 📅 Compare sales across custom periods\n- 🎯 Allocate SP/PY targets based on recent performance\nUse the sidebar to navigate and upload data once.",
         "data_loaded_msg": "Data is loaded — choose a page from the menu.",
@@ -229,6 +242,20 @@ texts = {
         "custom_analysis": "تحليل مخصص",
         "target_allocation": "تخصيص أهداف SP/PY",
         "ai_insights": "رؤى الذكاء الاصطناعي",
+        "customer_insights": "رؤى العملاء",
+        "customer_insights_title": "لوحة رؤى العملاء",
+        "rfm_analysis_sub": "تحليل RFM",
+        "rfm_table_sub": "جدول RFM",
+        "rfm_chart_sub": "تصور RFM",
+        "rfm_no_data": "لا توجد بيانات متاحة لتحليل RFM.",
+        "rfm_download": "تنزيل تقرير RFM",
+        "rfm_cohort_sub": "تحليل الأتراب RFM",
+        "rfm_cohort_info": "يحلل كيفية تطور درجات RFM بمرور الوقت لأتراب اكتساب العملاء (مجمعة حسب شهر الشراء الأول).",
+        "rfm_cohort_table_sub": "جدول ملخص الأتراب",
+        "rfm_cohort_insights_sub": "الرؤى الرئيسية",
+        "rfm_cohort_download": "تنزيل تقرير الأتراب (إكسل)",
+        "rfm_cohort_no_data": "بيانات غير كافية لتحليل الأتراب.",
+        "product_availability_checker": "مدقق توفر المنتج",
         "home_title": "🏠 لوحة تحكم بيانات حنيف",
         "home_welcome": "**مرحبا بك في مركز تحليلات المبيعات!**\n- 📈 تتبع المبيعات والأهداف حسب البائع، اسم العميل، اسم الفرع\n- 📊 تصور الاتجاهات مع رسوم بيانية تفاعلية (الآن مع تنبؤ متقدم)\n- 💾 تنزيل التقارير في PPTX و Excel\n- 📅 مقارنة المبيعات عبر فترات مخصصة\n- 🎯 تخصيص أهداف SP/PY بناءً على الأداء الأخير\nاستخدم الشريط الجانبي للتنقل وتحميل البيانات مرة واحدة.",
         "data_loaded_msg": "تم تحميل البيانات — اختر صفحة من القائمة.",
@@ -378,7 +405,6 @@ texts = {
 st.set_page_config(page_title=texts[lang]["page_title"], layout=texts[lang]["layout"], page_icon=texts[lang]["page_icon"])
 
 # --- Streamlit Authenticator (v0.4.2) ---
-
 # Hash the plain-text passwords
 hashed_passwords = [
     stauth.Hasher.hash("admin123"),
@@ -658,17 +684,12 @@ def load_data(file):
 
 # --- Helpers: Downloads ---
 @st.cache_data
-# def to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Sheet1", index: bool = True) -> bytes:
-#     output = io.BytesIO()
-#     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-#         df.to_excel(writer, sheet_name=sheet_name, index=index)
-#     return output.getvalue()
 def to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Sheet1", index: bool = False) -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df.to_excel(writer, sheet_name=sheet_name, index=index)
-        # DO NOT call writer.save() here
     return output.getvalue()
+
 @st.cache_data
 def to_multi_sheet_excel_bytes(dfs, sheet_names) -> bytes:
     output = io.BytesIO()
@@ -741,7 +762,8 @@ def create_pptx(report_df, billing_df, py_table, figs_dict, kpi_data):
                 cell.text_frame.paragraphs[0].font.name = 'Roboto'
                 cell.text_frame.paragraphs[0].font.bold = True
                 cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
-                cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(30, 58, 138)
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = RGBColor(30, 58, 138)
             for i, row in enumerate(df.itertuples(index=False), start=1):
                 for j, val in enumerate(row):
                     cell = table.cell(i, j)
@@ -751,7 +773,7 @@ def create_pptx(report_df, billing_df, py_table, figs_dict, kpi_data):
                         cell.text = str(val)
                     cell.text_frame.paragraphs[0].font.size = Pt(12)
                     cell.text_frame.paragraphs[0].font.name = 'Roboto'
-                    cell.fill.solid();
+                    cell.fill.solid()
                     cell.fill.fore_color.rgb = RGBColor(243, 244, 246) if i % 2 == 0 else RGBColor(255, 255, 255)
 
         def add_chart_slide(fig, title):
@@ -774,8 +796,12 @@ def create_pptx(report_df, billing_df, py_table, figs_dict, kpi_data):
         add_table_slide(report_df.reset_index(), texts[lang]["pptx_summary_title"])
         add_table_slide(billing_df.reset_index(), texts[lang]["pptx_billing_title"])
         add_table_slide(py_table.reset_index(), texts[lang]["pptx_py_title"])
-        for key, fig in figs_dict.items(): add_chart_slide(fig, key)
-        pptx_stream = io.BytesIO(); prs.save(pptx_stream); pptx_stream.seek(0); return pptx_stream
+        for key, fig in figs_dict.items():
+            add_chart_slide(fig, key)
+        pptx_stream = io.BytesIO()
+        prs.save(pptx_stream)
+        pptx_stream.seek(0)
+        return pptx_stream
 
 # --- Positive/Negative Coloring ---
 def color_positive_negative(val):
@@ -803,7 +829,8 @@ st.sidebar.markdown(f'<div class="tooltip">ℹ️<span class="tooltiptext">{text
 uploaded = st.sidebar.file_uploader("", type=["xlsx"], key="single_upload")
 if st.sidebar.button(texts[lang]["clear_data"]):
     for k in ["sales_df", "target_df", "ytd_df", "channels_df", "data_loaded"]:
-        if k in st.session_state: del st.session_state[k]
+        if k in st.session_state:
+            del st.session_state[k]
     st.experimental_rerun()
 
 if uploaded is not None and "data_loaded" not in st.session_state:
@@ -813,6 +840,7 @@ if uploaded is not None and "data_loaded" not in st.session_state:
     st.session_state["ytd_df"] = ytd_df
     st.session_state["channels_df"] = channels_df
     st.session_state["data_loaded"] = True
+    st.session_state["audit_log"] = []  # Initialize audit log
     st.success(texts[lang]["file_loaded"])
 
     # Log upload action
@@ -833,11 +861,11 @@ menu = [
     texts[lang]["custom_analysis"],
     texts[lang]["target_allocation"],
     texts[lang]["ai_insights"],
-    texts[lang].get("product_availability_checker", "Product Availability Checker")  # new page
+    texts[lang]["customer_insights"],
+    texts[lang]["product_availability_checker"]
 ]
 
 choice = st.sidebar.selectbox(texts[lang]["navigate"], menu)
-
 
 # Role-based filtering for data
 if "data_loaded" in st.session_state:
@@ -1097,7 +1125,7 @@ elif choice == texts[lang]["sales_tracking"]:
                             .set_table_styles([
                                 {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
                                                             ('font-weight', '800'), ('height', '40px'),
-                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')] }
                             ])
                             .apply(highlight_total_row, axis=1)
                             .format("{:,.0f}", subset=["KA Target","KA Sales","KA Remaining",
@@ -1105,6 +1133,7 @@ elif choice == texts[lang]["sales_tracking"]:
                             .format("{:.0f}%", subset=["KA % Achieved","Talabat % Achieved"])
                         )
                         st.dataframe(styled_report, use_container_width=True, hide_index=True)
+
                         if st.download_button(
                             texts[lang]["download_sales_targets"],
                             data=to_excel_bytes(report_df_with_total, sheet_name="Sales_Targets_Summary", index=False),
@@ -1117,6 +1146,7 @@ elif choice == texts[lang]["sales_tracking"]:
                                 "details": "Sales & Targets Summary Excel",
                                 "timestamp": datetime.now()
                             })
+
 
                         # --- Sales by Billing Type per Salesman ---
                         st.subheader(texts[lang]["sales_by_billing_sub"])
@@ -1136,6 +1166,7 @@ elif choice == texts[lang]["sales_tracking"]:
                         display_df["Return %"] = np.where(display_df["Sales Total"] != 0,
                                                         (display_df["Return"] / display_df["Sales Total"] * 100).round(0), 0)
                         display_df["Cancel Total"] = billing_wide[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
+
                         ordered_cols = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
                                         "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
                         display_df = display_df.reindex(columns=ordered_cols, fill_value=0)
@@ -1154,7 +1185,7 @@ elif choice == texts[lang]["sales_tracking"]:
                             .set_table_styles([
                                 {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
                                                             ('font-weight', '800'), ('height', '40px'),
-                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')] }
                             ])
                             .apply(highlight_total_row_billing, axis=1)
                             .format({
@@ -1164,6 +1195,7 @@ elif choice == texts[lang]["sales_tracking"]:
                             })
                         )
                         st.dataframe(styled_billing, use_container_width=True, hide_index=False)
+
                         if st.download_button(
                             texts[lang]["download_billing"],
                             data=to_excel_bytes(billing_df.reset_index(), sheet_name="Billing_Types", index=False),
@@ -1176,6 +1208,7 @@ elif choice == texts[lang]["sales_tracking"]:
                                 "details": "Billing Type Table Excel",
                                 "timestamp": datetime.now()
                             })
+
 
                         # --- Sales by PY Name 1 ---
                         st.subheader(texts[lang]["sales_by_py_sub"])
@@ -1196,13 +1229,14 @@ elif choice == texts[lang]["sales_tracking"]:
                             .set_table_styles([
                                 {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
                                                             ('font-weight', '800'), ('height', '40px'),
-                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')] }
                             ])
                             .apply(highlight_total_row_py, axis=1)
                             .format("{:,.0f}", subset=["Sales"])
                             .format("{:.0f}%", subset=["Contribution %"])
                         )
                         st.dataframe(styled_py, use_container_width=True, hide_index=False)
+
                         if st.download_button(
                             texts[lang]["download_py"],
                             data=to_excel_bytes(py_table_with_total.reset_index(), sheet_name="Sales_by_PY_Name", index=False),
@@ -1216,54 +1250,6 @@ elif choice == texts[lang]["sales_tracking"]:
                                 "timestamp": datetime.now()
                             })
 
-                        # --- Return by PY Name 1 ---
-                        st.subheader("🔄 Return by PY Name 1")
-                        py_billing = df_filtered.pivot_table(
-                            index="PY Name 1",
-                            columns="Billing Type",
-                            values="Net Value",
-                            aggfunc="sum",
-                            fill_value=0
-                        )
-
-                        py_billing = py_billing.reindex(columns=required_cols_raw, fill_value=0)
-                        py_billing["Sales Total"] = py_billing.sum(axis=1)
-                        py_billing["Return"] = py_billing["YKRE"] + py_billing["ZRE"]
-                        py_billing["Cancel Total"] = py_billing[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
-
-                        # Reorder columns like Sales by Billing table
-                        ordered_cols = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
-                                        "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
-                        # Map the original column names to the ordered display names
-                        py_billing = py_billing.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
-                        py_billing["Return %"] = np.where(py_billing["Sales Total"] != 0,
-                                                        (py_billing["Return"] / py_billing["Sales Total"] * 100).round(0), 0)
-                        py_billing = py_billing.reindex(columns=ordered_cols, fill_value=0).astype(int)
-
-                        # Add total row
-                        total_row = pd.DataFrame(py_billing.sum(numeric_only=True)).T
-                        total_row.index = ["Total"]
-                        total_row["Return %"] = round((total_row["Return"]/total_row["Sales Total"]*100), 0) if total_row["Sales Total"].iloc[0]!=0 else 0
-                        py_billing = pd.concat([py_billing, total_row])
-
-                        def highlight_total_row_py_return(row):
-                            return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
-
-                        styled_py_return = (
-                            py_billing.style
-                            .set_table_styles([
-                                {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
-                                                            ('font-weight', '800'), ('height', '40px'),
-                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
-                            ])
-                            .apply(highlight_total_row_py_return, axis=1)
-                            .format({
-                                "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
-                                "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
-                                "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
-                            })
-                        )
-                        st.dataframe(styled_py_return, use_container_width=True, hide_index=False)
 
                         # --- Return by SP Name1 ---
                         st.subheader("🔄 Return by SP Name1")
@@ -1274,19 +1260,15 @@ elif choice == texts[lang]["sales_tracking"]:
                             aggfunc="sum",
                             fill_value=0
                         )
-
                         sp_billing = sp_billing.reindex(columns=required_cols_raw, fill_value=0)
                         sp_billing["Sales Total"] = sp_billing.sum(axis=1)
                         sp_billing["Return"] = sp_billing["YKRE"] + sp_billing["ZRE"]
                         sp_billing["Cancel Total"] = sp_billing[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
-
-                        # Reorder and rename like Sales by Billing table
                         sp_billing = sp_billing.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
                         sp_billing["Return %"] = np.where(sp_billing["Sales Total"] != 0,
                                                         (sp_billing["Return"] / sp_billing["Sales Total"] * 100).round(0), 0)
                         sp_billing = sp_billing.reindex(columns=ordered_cols, fill_value=0).astype(int)
 
-                        # Add total row
                         total_row = pd.DataFrame(sp_billing.sum(numeric_only=True)).T
                         total_row.index = ["Total"]
                         total_row["Return %"] = round((total_row["Return"]/total_row["Sales Total"]*100), 0) if total_row["Sales Total"].iloc[0]!=0 else 0
@@ -1300,7 +1282,7 @@ elif choice == texts[lang]["sales_tracking"]:
                             .set_table_styles([
                                 {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
                                                             ('font-weight', '800'), ('height', '40px'),
-                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')] }
                             ])
                             .apply(highlight_total_row_sp_return, axis=1)
                             .format({
@@ -1310,6 +1292,7 @@ elif choice == texts[lang]["sales_tracking"]:
                             })
                         )
                         st.dataframe(styled_sp_return, use_container_width=True, hide_index=False)
+
 
                         # --- Return by Material Description ---
                         st.subheader("🔄 Return by Material Description")
@@ -1322,28 +1305,19 @@ elif choice == texts[lang]["sales_tracking"]:
                                 fill_value=0
                             )
 
-                            # safe column list for billing codes
                             material_cols_raw = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
                             material_billing = material_billing.reindex(columns=material_cols_raw, fill_value=0)
                             material_billing["Sales Total"] = material_billing.sum(axis=1)
                             material_billing["Return"] = material_billing["YKRE"] + material_billing["ZRE"]
                             material_billing["Cancel Total"] = material_billing[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
-
-                            # rename for display
                             material_billing = material_billing.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
                             material_billing["Return %"] = np.where(material_billing["Sales Total"] != 0,
                                                                     (material_billing["Return"] / material_billing["Sales Total"] * 100).round(0), 0)
 
                             ordered_cols_material = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
-                                                     "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
+                                                    "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
                             material_billing = material_billing.reindex(columns=ordered_cols_material, fill_value=0)
 
-                            # ensure numeric and handle possible non-int values
-                            for col in material_billing.columns:
-                                if col != "Return %":
-                                    material_billing[col] = pd.to_numeric(material_billing[col], errors="coerce").fillna(0)
-
-                            # Add total row
                             total_row = pd.DataFrame(material_billing.sum(numeric_only=True)).T
                             total_row.index = ["Total"]
                             total_row["Return %"] = round((total_row["Return"]/total_row["Sales Total"]*100), 0) if total_row["Sales Total"].iloc[0] != 0 else 0
@@ -1357,7 +1331,7 @@ elif choice == texts[lang]["sales_tracking"]:
                                 .set_table_styles([
                                     {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
                                                                 ('font-weight', '800'), ('height', '40px'),
-                                                                ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                                                                ('line-height', '40px'), ('border', '1px solid #E5E7EB')] }
                                 ])
                                 .apply(highlight_total_row_material, axis=1)
                                 .format({
@@ -1368,7 +1342,6 @@ elif choice == texts[lang]["sales_tracking"]:
                             )
                             st.dataframe(styled_material, use_container_width=True, hide_index=False)
 
-                            # download button for material table
                             if st.download_button(
                                 texts[lang].get("download_material", "Download Return by Material Description"),
                                 data=to_excel_bytes(material_billing.reset_index(), sheet_name="Return_by_Material", index=False),
@@ -1383,6 +1356,98 @@ elif choice == texts[lang]["sales_tracking"]:
                                 })
                         else:
                             st.info("No 'Material Description' column found in data — skipping Material Description table.")
+
+
+                        # --- Return by SP Name1 + Material Description ---
+                        st.subheader("🔄 Return by SP Name1 + Material Description")
+                        required_cols = {"SP Name1", "Material Description", "Billing Type", "Net Value"}
+                        if required_cols.issubset(df_filtered.columns):
+                            # Pivot table
+                            sp_mat_table = pd.pivot_table(
+                                df_filtered,
+                                index=["SP Name1", "Material Description"],
+                                columns="Billing Type",
+                                values="Net Value",
+                                aggfunc="sum",
+                                fill_value=0
+                            )
+
+                            # Ensure all billing columns exist
+                            billing_cols = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
+                            for col in billing_cols:
+                                if col not in sp_mat_table.columns:
+                                    sp_mat_table[col] = 0
+
+                            # Rename for display
+                            sp_mat_table = sp_mat_table.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
+                            
+                            # Calculate totals
+                            sp_mat_table["Sales Total"] = sp_mat_table.sum(axis=1, numeric_only=True)
+                            sp_mat_table["Return"] = sp_mat_table["YKRE"] + sp_mat_table["ZRE"]
+                            sp_mat_table["Cancel Total"] = sp_mat_table[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
+                            sp_mat_table["Return %"] = np.where(sp_mat_table["Sales Total"] != 0,
+                                                                (sp_mat_table["Return"] / sp_mat_table["Sales Total"] * 100).round(0), 0)
+
+                            # Reorder columns
+                            ordered_cols = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
+                                            "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
+                            sp_mat_table = sp_mat_table.reindex(columns=ordered_cols, fill_value=0)
+
+                            # Add total row
+                            total_row = pd.DataFrame(sp_mat_table.sum(numeric_only=True)).T
+                            total_row.index = [("Total", "")]
+                            total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100), 0) if total_row["Sales Total"].iloc[0]!=0 else 0
+                            sp_mat_table = pd.concat([sp_mat_table, total_row])
+
+                            # Highlighting function
+                            def highlight_sp_mat(row):
+                                styles = []
+                                for col in row.index:
+                                    if row.name == ("Total", ""):
+                                        styles.append('background-color: #BFDBFE; color: #1E3A8A; font-weight: 900')
+                                    elif col == "Return" and row[col] > 0:
+                                        styles.append('background-color: #FECACA; color: #991B1B; font-weight: 700')  # highlight returns
+                                    elif col == "Cancel Total" and row[col] > 0:
+                                        styles.append('background-color: #FDE68A; color: #92400E; font-weight: 700')  # highlight cancels
+                                    elif col == "Sales Total" and row[col] > 0:
+                                        styles.append('background-color: #D1FAE5; color: #065F46; font-weight: 700')  # highlight sales
+                                    else:
+                                        styles.append('')
+                                return styles
+
+                            # Style the table
+                            styled_sp_mat = (
+                                sp_mat_table.style
+                                .set_table_styles([
+                                    {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
+                                                                ('font-weight', '800'), ('height', '40px'),
+                                                                ('line-height', '40px'), ('border', '1px solid #E5E7EB')] }
+                                ])
+                                .apply(highlight_sp_mat, axis=1)
+                                .format({
+                                    "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
+                                    "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
+                                    "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
+                                })
+                            )
+
+                            st.dataframe(styled_sp_mat, use_container_width=True)
+
+                            # Download button
+                            if st.download_button(
+                                texts[lang].get("download_sp_material", "Download Return by SP+Material"),
+                                data=to_excel_bytes(sp_mat_table.reset_index(), sheet_name="Return_by_SP_Material", index=False),
+                                file_name=f"Return_by_SP_Material_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            ):
+                                st.session_state["audit_log"].append({
+                                    "user": username,
+                                    "action": "download",
+                                    "details": "Return by SP+Material Excel",
+                                    "timestamp": datetime.now()
+                                })
+                        else:
+                            st.info("Required columns are missing in your data for SP+Material table.")
 
                 # --- CHARTS ---
                 with tabs[2]:
@@ -2176,9 +2241,11 @@ elif choice == "Year to Date Comparison":
         st.title("📅 Year to Date Comparison")
         st.markdown('<div class="tooltip">ℹ️<span class="tooltiptext">Compare sales across two periods by a selected dimension.</span></div>', unsafe_allow_html=True)
 
+        # --- Select Dimension ---
         st.subheader("📊 Choose Dimension")
         dimension = st.selectbox("Choose dimension", ["PY Name 1", "Driver Name EN", "SP Name1"], index=0)
 
+        # --- Select Two Periods ---
         st.subheader("📆 Select Two Periods")
         col1, col2 = st.columns(2)
         with col1:
@@ -2193,8 +2260,14 @@ elif choice == "Year to Date Comparison":
             period2_start, period2_end = period2_range
             df_p1 = ytd_df[(ytd_df["Billing Date"] >= pd.to_datetime(period1_start)) & (ytd_df["Billing Date"] <= pd.to_datetime(period1_end))]
             df_p2 = ytd_df[(ytd_df["Billing Date"] >= pd.to_datetime(period2_start)) & (ytd_df["Billing Date"] <= pd.to_datetime(period2_end))]
-            summary_p1 = df_p1.groupby(dimension)["Net Value"].sum().reset_index().rename(columns={"Net Value": f"{period1_start.strftime('%Y-%m-%d')} to {period1_end.strftime('%Y-%m-%d')} Sales"})
-            summary_p2 = df_p2.groupby(dimension)["Net Value"].sum().reset_index().rename(columns={"Net Value": f"{period2_start.strftime('%Y-%m-%d')} to {period2_end.strftime('%Y-%m-%d')} Sales"})
+
+            # --- YTD Comparison Table ---
+            summary_p1 = df_p1.groupby(dimension)["Net Value"].sum().reset_index().rename(
+                columns={"Net Value": f"{period1_start.strftime('%Y-%m-%d')} to {period1_end.strftime('%Y-%m-%d')} Sales"}
+            )
+            summary_p2 = df_p2.groupby(dimension)["Net Value"].sum().reset_index().rename(
+                columns={"Net Value": f"{period2_start.strftime('%Y-%m-%d')} to {period2_end.strftime('%Y-%m-%d')} Sales"}
+            )
             ytd_comparison = pd.merge(summary_p1, summary_p2, on=dimension, how="outer").fillna(0)
             ytd_comparison["Difference"] = ytd_comparison.iloc[:, 2] - ytd_comparison.iloc[:, 1]
             ytd_comparison.rename(columns={dimension: "Name"}, inplace=True)
@@ -2218,56 +2291,30 @@ elif choice == "Year to Date Comparison":
                 file_name=f"YTD_Comparison_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-                        # --- Top 10 Customers: Last Year vs Current Year ---
-            st.subheader("🏆 Top 10 Customers – Last Year vs Current Year")
 
-            # Extract year
+            # --- Top 10 Customers: Last Year vs Current Year ---
+            st.subheader("🏆 Top 10 Customers – Last Year vs Current Year")
             ytd_df["Year"] = ytd_df["Billing Date"].dt.year
             current_year = pd.Timestamp.today().year
             last_year = current_year - 1
-
-            # Aggregate sales by customer & year
             cust_sales = (
                 ytd_df[ytd_df["Year"].isin([last_year, current_year])]
                 .groupby(["PY Name 1", "Year"])["Net Value"]
                 .sum()
                 .reset_index()
             )
-
             if cust_sales.empty:
                 st.info("⚠️ No customer sales found for last year or current year.")
             else:
-                # Pivot for sorting
                 cust_pivot = cust_sales.pivot(index="PY Name 1", columns="Year", values="Net Value").fillna(0)
                 cust_pivot["Total"] = cust_pivot.sum(axis=1)
-
-                # Top 10 customers
                 top10_cust = cust_pivot.sort_values("Total", ascending=False).head(10).reset_index()
-
-                # Merge back for plotting
-                top10_melt = top10_cust.melt(
-                    id_vars="PY Name 1",
-                    value_vars=[last_year, current_year],
-                    var_name="Year",
-                    value_name="Sales"
-                )
-
-                # Add performance status for coloring
-                top10_melt = top10_melt.merge(
-                    top10_cust[["PY Name 1", last_year, current_year]],
-                    on="PY Name 1",
-                    how="left"
-                )
-                top10_melt["Status"] = np.where(
-                    top10_melt["Year"] == current_year,
-                    np.where(top10_melt[current_year] >= top10_melt[last_year], "Achieved", "Not Achieved"),
-                    "Previous"
-                )
-
-                # Define colors
+                top10_melt = top10_cust.melt(id_vars="PY Name 1", value_vars=[last_year, current_year], var_name="Year", value_name="Sales")
+                top10_melt = top10_melt.merge(top10_cust[["PY Name 1", last_year, current_year]], on="PY Name 1", how="left")
+                top10_melt["Status"] = np.where(top10_melt["Year"] == current_year,
+                                                np.where(top10_melt[current_year] >= top10_melt[last_year], "Achieved", "Not Achieved"),
+                                                "Previous")
                 color_map = {"Achieved": "green", "Not Achieved": "red", "Previous": "gray"}
-
-                # Plot bar chart
                 fig_top10 = px.bar(
                     top10_melt,
                     x="PY Name 1",
@@ -2277,109 +2324,85 @@ elif choice == "Year to Date Comparison":
                     barmode="group",
                     text=top10_melt["Sales"].apply(lambda x: f"{x:,.0f}")
                 )
-
-                fig_top10.update_traces(
-                    textposition="inside",
-                    insidetextanchor="middle",
-                    textfont=dict(color="white", size=12)
-                )
-
-                fig_top10.update_layout(
-                    title=f"Top 10 Customers: {last_year} vs {current_year}",
-                    xaxis_title="Customer",
-                    yaxis_title="Sales (KD)",
-                    font=dict(family="Roboto", size=12),
-                    plot_bgcolor="#F3F4F6",
-                    paper_bgcolor="#F3F4F6"
-                )
-
+                fig_top10.update_traces(textposition="inside", insidetextanchor="middle", textfont=dict(color="white", size=12))
+                fig_top10.update_layout(title=f"Top 10 Customers: {last_year} vs {current_year}",
+                                        xaxis_title="Customer", yaxis_title="Sales (KD)",
+                                        font=dict(family="Roboto", size=12),
+                                        plot_bgcolor="#F3F4F6", paper_bgcolor="#F3F4F6")
                 st.plotly_chart(fig_top10, use_container_width=True)
+
+            # --- Return by SP Name1 + Material Description (YTD) ---
+            st.subheader("🔄 Return by SP Name1 + Material Description (YTD)")
+            required_cols = {"SP Name1", "Material Description", "Billing Type", "Net Value"}
+            if required_cols.issubset(ytd_df.columns):
+                sp_mat_ytd = pd.pivot_table(
+                    ytd_df,
+                    index=["SP Name1", "Material Description"],
+                    columns="Billing Type",
+                    values="Net Value",
+                    aggfunc="sum",
+                    fill_value=0
+                )
+                billing_cols = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
+                for col in billing_cols:
+                    if col not in sp_mat_ytd.columns:
+                        sp_mat_ytd[col] = 0
+                sp_mat_ytd = sp_mat_ytd.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
+                sp_mat_ytd["Sales Total"] = sp_mat_ytd.sum(axis=1, numeric_only=True)
+                sp_mat_ytd["Return"] = sp_mat_ytd["YKRE"] + sp_mat_ytd["ZRE"]
+                sp_mat_ytd["Cancel Total"] = sp_mat_ytd[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
+                sp_mat_ytd["Return %"] = np.where(sp_mat_ytd["Sales Total"] != 0,
+                                                  (sp_mat_ytd["Return"] / sp_mat_ytd["Sales Total"] * 100).round(0), 0)
+                ordered_cols = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
+                                "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
+                sp_mat_ytd = sp_mat_ytd.reindex(columns=ordered_cols, fill_value=0)
+                total_row = pd.DataFrame(sp_mat_ytd.sum(numeric_only=True)).T
+                total_row.index = [("Total", "")]
+                total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100), 0) if total_row["Sales Total"].iloc[0] != 0 else 0
+                sp_mat_ytd = pd.concat([sp_mat_ytd, total_row])
+
+                # Conditional highlights for easy read
+                def highlight_sp_mat(row):
+                    styles = []
+                    for col in row.index:
+                        if row.name == ("Total", ""):
+                            styles.append('background-color: #BFDBFE; color: #1E3A8A; font-weight: 900')
+                        elif col == "Return" and row[col] > 0:
+                            styles.append('background-color: #FECACA; color: #991B1B; font-weight: 700')
+                        elif col == "Cancel Total" and row[col] > 0:
+                            styles.append('background-color: #FDE68A; color: #92400E; font-weight: 700')
+                        elif col == "Sales Total" and row[col] > 0:
+                            styles.append('background-color: #D1FAE5; color: #065F46; font-weight: 700')
+                        else:
+                            styles.append('')
+                    return styles
+
+                styled_sp_mat = (
+                    sp_mat_ytd.style
+                    .set_table_styles([
+                        {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
+                                                    ('font-weight', '800'), ('height', '40px'),
+                                                    ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                    ])
+                    .apply(highlight_sp_mat, axis=1)
+                    .format({
+                        "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
+                        "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
+                        "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
+                    })
+                )
+                st.dataframe(styled_sp_mat, use_container_width=True)
+                st.download_button(
+                    "⬇️ Download Return by SP+Material (YTD)",
+                    data=to_excel_bytes(sp_mat_ytd.reset_index(), sheet_name="Return_by_SP_Material_YTD", index=False),
+                    file_name=f"Return_by_SP_Material_YTD_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.info("Required columns for SP+Material YTD table are missing.")
 
     else:
         st.warning("⚠️ Please ensure the 'YTD' sheet is present in your uploaded file.")
-    # --- Columns mapping for Return tables ---
-    required_cols_raw = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
-    ordered_cols = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
-                    "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
-
-    st.subheader("🔄 Return Comparison (YTD)")
-
-    def get_return_table(df_period, index_col):
-        table = df_period.pivot_table(
-            index=index_col,
-            columns="Billing Type",
-            values="Net Value",
-            aggfunc="sum",
-            fill_value=0
-        )
-        table = table.reindex(columns=required_cols_raw, fill_value=0)
-        table["Sales Total"] = table.sum(axis=1)
-        table["Return"] = table["YKRE"] + table["ZRE"]
-        table["Cancel Total"] = table[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
-        table = table.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
-        table["Return %"] = np.where(table["Sales Total"] != 0,
-                                    (table["Return"] / table["Sales Total"] * 100).round(0), 0)
-        total_return = table["Return"].sum()
-        table["Contribution %"] = np.where(total_return != 0,
-                                        (table["Return"] / total_return * 100).round(0), 0)
-        table = table.reindex(columns=ordered_cols, fill_value=0).astype(int)
-        return table
-
-    def color_diff(val):
-        if val > 0:
-            return "color: green; font-weight: 700"
-        elif val < 0:
-            return "color: red; font-weight: 700"
-        else:
-            return ""
-
-    # Decide which Return table to show based on selected dimension
-    if dimension == "PY Name 1":
-        return_p1 = get_return_table(df_p1, "PY Name 1")
-        return_p2 = get_return_table(df_p2, "PY Name 1")
-        title = "Return Comparison by PY Name 1"
-    elif dimension == "SP Name1":
-        return_p1 = get_return_table(df_p1, "SP Name1")
-        return_p2 = get_return_table(df_p2, "SP Name1")
-        title = "Return Comparison by SP Name1"
-    else:
-        return_p1 = return_p2 = None  # Optionally skip table for Driver Name EN
-        title = None
-
-    if return_p1 is not None:
-        for t in [return_p1, return_p2]:
-            if "Contribution %" not in t.columns:
-                t["Contribution %"] = 0
-
-        return_comparison = return_p1.merge(return_p2, left_index=True, right_index=True, suffixes=("_P1", "_P2")).fillna(0)
-
-        for col in ["Sales Total", "Return", "Cancel Total", "Return %", "Contribution %"]:
-            return_comparison[f"{col}_Diff"] = return_comparison[f"{col}_P2"] - return_comparison[f"{col}_P1"]
-
-        total_row = pd.DataFrame(return_comparison.sum(numeric_only=True)).T
-        total_row.index = ["Total"]
-        return_comparison = pd.concat([return_comparison, total_row])
-
-        styled_return = (
-            return_comparison.style
-            .set_table_styles([
-                {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
-                                            ('font-weight', '800'), ('height', '40px'),
-                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
-            ])
-            .apply(lambda row: ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name=="Total" else '' for _ in row], axis=1)
-            .applymap(color_diff, subset=[c for c in return_comparison.columns if "_Diff" in c])
-            .format("{:,.0f}", subset=[c for c in return_comparison.columns if "_P" in c or "_Diff" in c])
-        )
-        st.subheader(f"🔄 {title}")
-        st.dataframe(styled_return, use_container_width=True, hide_index=False)
-
-        st.download_button(
-            f"⬇️ Download {title}",
-            data=to_excel_bytes(return_comparison.reset_index(), sheet_name=title.replace(" ", "_"), index=False),
-            file_name=f"{title.replace(' ', '_')}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
 
 
 
@@ -3270,6 +3293,216 @@ Channels Sheet:
 
             st.write("\n".join(answer_lines))
             
+            
+# --- Customer Insights Page ---
+elif choice == texts[lang]["customer_insights"]:
+    st.title(texts[lang]["customer_insights_title"])
+    
+    if "data_loaded" not in st.session_state:
+        st.warning(texts[lang]["no_data_warning"])
+        st.stop()
+
+    # Use sales_df directly
+    df_rfm = st.session_state["sales_df"].copy()
+    if df_rfm.empty or "SP Name1" not in df_rfm.columns or "Billing Date" not in df_rfm.columns or "Net Value" not in df_rfm.columns:
+        st.warning(texts[lang]["rfm_no_data"])
+        st.stop()
+
+    # Apply salesman filter if applicable
+    if user_role == "salesman" and salesman_name:
+        df_rfm = df_rfm[df_rfm["Driver Name EN"] == salesman_name]
+
+    # --- Basic RFM Calculation ---
+    today = pd.Timestamp.today().normalize()
+    rfm_df = df_rfm.groupby("SP Name1").agg({
+        "Billing Date": lambda x: (today - x.max()).days,  # Recency
+        "Net Value": ["count", "sum"]  # Frequency, Monetary
+    })
+    rfm_df.columns = ["Recency", "Frequency", "Monetary"]
+    rfm_df = rfm_df[rfm_df["Monetary"] > 0]  # Filter positive monetary
+
+    if rfm_df.empty:
+        st.warning(texts[lang]["rfm_no_data"])
+        st.stop()
+
+    # --- RFM Scoring ---
+    try:
+        rfm_df["R_Score"] = pd.qcut(rfm_df["Recency"], 4, labels=[4, 3, 2, 1], duplicates='drop')
+        rfm_df["F_Score"] = pd.qcut(rfm_df["Frequency"].rank(method="first"), 4, labels=[1, 2, 3, 4], duplicates='drop')
+        rfm_df["M_Score"] = pd.qcut(rfm_df["Monetary"].rank(method="first"), 4, labels=[1, 2, 3, 4], duplicates='drop')
+    except ValueError:
+        st.warning("⚠️ Insufficient data variation for RFM scoring. Try expanding the dataset.")
+        st.stop()
+
+    rfm_df["RFM_Score"] = rfm_df["R_Score"].astype(str) + rfm_df["F_Score"].astype(str) + rfm_df["M_Score"].astype(str)
+
+    # --- Segments ---
+    def rfm_segment(row):
+        if row["RFM_Score"] in ["444", "443", "434", "433"]:
+            return "Champions"
+        elif row["R_Score"] >= 3 and row["F_Score"] >= 3:
+            return "Loyal Customers"
+        elif row["R_Score"] >= 3 and row["M_Score"] >= 3:
+            return "Potential Loyalists"
+        elif row["R_Score"] >= 3:
+            return "New Customers"
+        elif row["R_Score"] <= 2 and row["F_Score"] >= 2 and row["M_Score"] >= 2:
+            return "At Risk"
+        elif row["R_Score"] <= 1 and row["F_Score"] >= 2 and row["M_Score"] >= 2:
+            return "Hibernating"
+        else:
+            return "Others"
+
+    rfm_df["Segment"] = rfm_df.apply(rfm_segment, axis=1)
+
+    # --- Tabs ---
+    tab1, tab2, tab3 = st.tabs([texts[lang]["rfm_analysis_sub"], texts[lang]["rfm_cohort_sub"], "Weekly Visit Tracker"])
+
+    # ---------------- RFM Analysis Tab ----------------
+    with tab1:
+        st.subheader(texts[lang]["rfm_table_sub"])
+        numeric_cols = ["Recency", "Frequency", "Monetary"]
+        rfm_display_df = rfm_df.copy()
+        rfm_display_df[numeric_cols] = rfm_display_df[numeric_cols].astype(int)
+
+        st.dataframe(
+            rfm_display_df.sort_values("Monetary", ascending=False),
+            use_container_width=True
+        )
+
+        # Download RFM Table
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        excel_data = to_excel_bytes(rfm_df.reset_index(), sheet_name="RFM_Analysis")
+        if st.download_button(
+            texts[lang]["rfm_download"],
+            data=excel_data,
+            file_name=f"rfm_analysis_{timestamp}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ):
+            st.session_state["audit_log"].append({
+                "user": username,
+                "action": "download",
+                "details": f"rfm_analysis_{timestamp}.xlsx",
+                "timestamp": datetime.now().isoformat()
+            })
+
+        # RFM Scatter Plot
+        st.subheader(texts[lang]["rfm_chart_sub"])
+        fig_rfm = px.scatter(
+            rfm_df.reset_index(),
+            x="Recency",
+            y="Monetary",
+            size="Frequency",
+            color="Segment",
+            hover_name="SP Name1",
+            title="RFM Scatter Plot (Size = Frequency)",
+            color_discrete_sequence=px.colors.qualitative.D3
+        )
+        st.plotly_chart(fig_rfm, use_container_width=True)
+
+    # ---------------- Cohort Analysis Tab ----------------
+    with tab2:
+        st.subheader(texts[lang]["rfm_cohort_sub"])
+        st.info(texts[lang]["rfm_cohort_info"])
+
+        df_cohort = df_rfm.copy().reset_index().rename(columns={"SP Name1": "Customer"})
+        df_cohort["First_Purchase"] = df_cohort.groupby("Customer")["Billing Date"].transform("min")
+        df_cohort["Cohort_Month"] = df_cohort["First_Purchase"].dt.to_period("M")
+        df_cohort["Period_Month"] = df_cohort["Billing Date"].dt.to_period("M")
+        df_cohort["Cohort_Index"] = (df_cohort["Period_Month"] - df_cohort["Cohort_Month"]).apply(lambda x: x.n)
+
+        cohort_data = df_cohort.groupby(["Cohort_Month", "Cohort_Index", "Customer"]).agg({
+            "Billing Date": lambda x: (today - x.max()).days,
+            "Net Value": ["count", "sum"]
+        }).reset_index()
+        cohort_data.columns = ["Cohort_Month", "Cohort_Index", "Customer", "Recency", "Frequency", "Monetary"]
+
+        cohort_data = cohort_data.groupby(["Cohort_Month", "Cohort_Index"]).agg({
+            "Recency": "mean",
+            "Frequency": "mean",
+            "Monetary": "mean",
+            "Customer": "nunique"
+        }).round(1).reset_index()
+
+        cohort_data["Cohort_Month"] = cohort_data["Cohort_Month"].astype(str)
+        cohort_data["Cohort_Index"] = cohort_data["Cohort_Index"].astype(int)
+
+        cohort_pivot_m = cohort_data.pivot(index="Cohort_Month", columns="Cohort_Index", values="Monetary")
+
+        fig_cohort_m = px.imshow(
+            cohort_pivot_m.fillna(0),
+            labels=dict(x="Period (Months After Acquisition)", y="Cohort (First Purchase Month)", color="Avg Monetary (KD)"),
+            title="Monetary Value Evolution by Cohort (Heatmap)",
+            color_continuous_scale="Viridis"
+        )
+        st.plotly_chart(fig_cohort_m, use_container_width=True)
+
+        st.subheader(texts[lang]["rfm_cohort_table_sub"])
+        st.dataframe(cohort_data.pivot(index="Cohort_Month", columns="Cohort_Index", values="Customer"), use_container_width=True)
+
+        # Cohort Insights
+        if not cohort_data.empty:
+            latest_cohort = cohort_data[cohort_data["Cohort_Index"] == 0]["Monetary"].mean()
+            retention_rate = (cohort_data[cohort_data["Cohort_Index"] == 1]["Customer"].sum() /
+                             cohort_data[cohort_data["Cohort_Index"] == 0]["Customer"].sum() * 100) \
+                             if len(cohort_data[cohort_data["Cohort_Index"] == 0]) > 0 else 0
+            st.metric("Avg Monetary in Latest Cohort", f"KD {int(latest_cohort)}")
+            st.metric("1-Month Retention Rate", f"{retention_rate:.0f}%")
+            st.info("Higher retention and increasing monetary indicate strong cohorts. Focus retention efforts on declining ones.")
+        else:
+            st.warning(texts[lang]["rfm_cohort_no_data"])
+
+    # ---------------- Weekly Visit Tracker Tab ----------------
+    with tab3:
+        st.subheader("Weekly Visit Tracker")
+
+        # Get YTD data from last 3 months
+        ytd_df = st.session_state["ytd_df"].copy()
+        ytd_df["Billing Date"] = pd.to_datetime(ytd_df["Billing Date"])
+        last_3_months = today - pd.DateOffset(months=3)
+        
+        # Filter YTD data for last 3 months
+        recent_ytd = ytd_df[ytd_df["Billing Date"] >= last_3_months]
+
+        # Customer list comes from YTD SP Name1
+        customer_list = recent_ytd["SP Name1"].unique()
+
+        if len(customer_list) == 0:
+            st.info("No customers in YTD with sales in last 3 months.")
+        else:
+            # Initialize weekly tracker for last 7 days
+            days_list = [(today - pd.Timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
+            visit_df = pd.DataFrame({"Customer": customer_list})
+            for day in days_list:
+                visit_df[day] = 0
+
+            # Fill visits from full sales data
+            sales_df = st.session_state["sales_df"].copy()
+            sales_df["Billing Date"] = pd.to_datetime(sales_df["Billing Date"])
+            recent_sales_last7 = sales_df[sales_df["Billing Date"] >= today - pd.Timedelta(days=6)]
+
+            for _, row in recent_sales_last7.iterrows():
+                cust = row["SP Name1"]
+                day = row["Billing Date"].strftime("%Y-%m-%d")
+                if cust in visit_df["Customer"].values and day in visit_df.columns:
+                    visit_df.loc[visit_df["Customer"] == cust, day] = 1
+
+            # Highlight missed visits
+            def highlight_missed(val):
+                return "background-color: #F87171; color: white; font-weight: bold" if val == 0 else ""
+
+            st.dataframe(
+                visit_df.style.applymap(highlight_missed, subset=days_list),
+                use_container_width=True
+            )
+
+            # Summary message
+            total_missed = (visit_df[days_list] == 0).sum().sum()
+            if total_missed == 0:
+                st.success("All customers visited in the last 7 days.")
+            else:
+                st.warning(f"⚠️ Total missed visits in last 7 days: {total_missed}")
+  
 # --- Product Availability Checker Page ---
 elif choice == "Product Availability Checker":
     st.title("🛒 Product Availability Checker")
