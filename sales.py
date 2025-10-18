@@ -3471,7 +3471,6 @@ elif choice == texts[lang]["customer_insights"]:
                     for n in candidates:
                         if n in df.columns:
                             return n
-                    # fallback: substring match
                     for c in df.columns:
                         lc = c.lower()
                         for n in candidates:
@@ -3516,7 +3515,7 @@ elif choice == texts[lang]["customer_insights"]:
                         days_dt = [today - pd.Timedelta(days=i) for i in range(7, 0, -1)]  # 7..1 days ago
                         days_str = [d.strftime("%Y-%m-%d") for d in days_dt]
 
-                        # filter sales to the same last-7-days window (>= 7 days ago and < today)
+                        # filter sales to the same last-7-days window
                         sales_window_start = days_dt[0].normalize()
                         sales_window_end = today.normalize()  # exclusive
                         sales_last7 = sales_df[
@@ -3524,13 +3523,12 @@ elif choice == texts[lang]["customer_insights"]:
                             (sales_df[date_col_sales] < sales_window_end)
                         ].copy()
 
-                        # normalize customer values to string for safe merging/matching
+                        # normalize customer values to string
                         sales_last7[cust_col_sales] = sales_last7[cust_col_sales].astype(str)
                         customer_list = customer_list.astype(str)
 
                         # group and sum amounts by customer + date string
                         sales_last7["__date_str"] = sales_last7[date_col_sales].dt.strftime("%Y-%m-%d")
-                        # ensure amount column numeric
                         sales_last7[amount_col] = pd.to_numeric(sales_last7[amount_col], errors="coerce").fillna(0.0)
                         grouped = (
                             sales_last7.groupby([cust_col_sales, "__date_str"], dropna=False)[amount_col]
@@ -3542,24 +3540,20 @@ elif choice == texts[lang]["customer_insights"]:
                         # pivot to have dates as columns
                         pivot = grouped.pivot(index="Customer", columns="Date", values="Amount").reindex(columns=days_str, fill_value=0.0)
 
-                        # prepare base DataFrame with all customers from YTD (last 3 months), keep ordering
+                        # prepare base DataFrame with all customers from YTD
                         base = pd.DataFrame({"Customer": customer_list})
-                        # Merge pivot amounts into base (left join so all YTD customers appear even if no visits)
                         pivot_reset = pivot.reset_index().rename(columns={"Customer": "Customer"})
                         visit_df = base.merge(pivot_reset, on="Customer", how="left").fillna(0.0)
 
-                        # ensure all day columns exist
                         for d in days_str:
                             if d not in visit_df.columns:
                                 visit_df[d] = 0.0
 
                         # add Weekly Total column
                         visit_df["Weekly Total"] = visit_df[days_str].sum(axis=1)
-
-                        # format numeric columns to integers (no decimals) for display
                         visit_df[days_str + ["Weekly Total"]] = visit_df[days_str + ["Weekly Total"]].round(0).astype(int)
 
-                        # highlight function: 0 -> red, >0 -> green
+                        # highlight function
                         def _highlight(v):
                             try:
                                 if int(v) == 0:
@@ -3569,27 +3563,26 @@ elif choice == texts[lang]["customer_insights"]:
                             except:
                                 return ""
 
-                        # show small summary: customers with zero visits at all in last 7 days
+                        # find customers with zero visits
                         no_visit_mask = (visit_df[days_str].sum(axis=1) == 0)
                         customers_not_visited = visit_df.loc[no_visit_mask, "Customer"].tolist()
                         total_customers_not_visited = int(no_visit_mask.sum())
                         total_missed_cells = int((visit_df[days_str] == 0).sum().sum())
 
-                        # render table (styled)
+                        # render main table
                         styled = visit_df.style.applymap(_highlight, subset=days_str + ["Weekly Total"]).format("{:,.0f}", subset=days_str + ["Weekly Total"])
-
                         st.dataframe(styled, use_container_width=True)
 
-                        # messages & download
+                        # messages
                         if total_customers_not_visited == 0:
                             st.success("✅ All listed customers had at least one visit in the last 7 days (excluding today).")
                         else:
                             st.warning(f"⚠️ {total_customers_not_visited} customer(s) had NO visits in the last 7 days (excluding today).")
-                            # --- Updated: show Not Visited as a small table ---
-                            st.subheader("🚫 Not Visited Customers (sample, max 25)")
+                            # --- All Not Visited Customers Table ---
+                            st.subheader("🚫 Not Visited Customers")
                             not_visited_df = pd.DataFrame({
-                                "No.": range(1, min(26, len(customers_not_visited)+1)),
-                                "Customer Name": customers_not_visited[:25]
+                                "No.": range(1, len(customers_not_visited)+1),
+                                "Customer Name": customers_not_visited
                             })
                             st.dataframe(not_visited_df, use_container_width=True)
 
