@@ -3452,57 +3452,167 @@ elif choice == texts[lang]["customer_insights"]:
         else:
             st.warning(texts[lang]["rfm_cohort_no_data"])
 
-    # ---------------- Weekly Visit Tracker Tab ----------------
-    with tab3:
-        st.subheader("Weekly Visit Tracker")
+        # ---------------- Weekly Visit Tracker Tab ----------------
+        with tab3:
+            st.subheader("Weekly Visit Tracker")
 
-        # Get YTD data from last 3 months
-        ytd_df = st.session_state["ytd_df"].copy()
-        ytd_df["Billing Date"] = pd.to_datetime(ytd_df["Billing Date"])
-        last_3_months = today - pd.DateOffset(months=3)
-        
-        # Filter YTD data for last 3 months
-        recent_ytd = ytd_df[ytd_df["Billing Date"] >= last_3_months]
-
-        # Customer list comes from YTD SP Name1
-        customer_list = recent_ytd["SP Name1"].unique()
-
-        if len(customer_list) == 0:
-            st.info("No customers in YTD with sales in last 3 months.")
-        else:
-            # Initialize weekly tracker for last 7 days
-            days_list = [(today - pd.Timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
-            visit_df = pd.DataFrame({"Customer": customer_list})
-            for day in days_list:
-                visit_df[day] = 0
-
-            # Fill visits from full sales data
-            sales_df = st.session_state["sales_df"].copy()
-            sales_df["Billing Date"] = pd.to_datetime(sales_df["Billing Date"])
-            recent_sales_last7 = sales_df[sales_df["Billing Date"] >= today - pd.Timedelta(days=6)]
-
-            for _, row in recent_sales_last7.iterrows():
-                cust = row["SP Name1"]
-                day = row["Billing Date"].strftime("%Y-%m-%d")
-                if cust in visit_df["Customer"].values and day in visit_df.columns:
-                    visit_df.loc[visit_df["Customer"] == cust, day] = 1
-
-            # Highlight missed visits
-            def highlight_missed(val):
-                return "background-color: #F87171; color: white; font-weight: bold" if val == 0 else ""
-
-            st.dataframe(
-                visit_df.style.applymap(highlight_missed, subset=days_list),
-                use_container_width=True
-            )
-
-            # Summary message
-            total_missed = (visit_df[days_list] == 0).sum().sum()
-            if total_missed == 0:
-                st.success("All customers visited in the last 7 days.")
+            # quick safety checks
+            if "ytd_df" not in st.session_state or st.session_state["ytd_df"].empty:
+                st.info("YTD sheet is missing or empty in session state.")
+            elif "sales_df" not in st.session_state or st.session_state["sales_df"].empty:
+                st.info("Sales sheet is missing or empty in session state.")
             else:
-                st.warning(f"⚠️ Total missed visits in last 7 days: {total_missed}")
-  
+                # copy data
+                ytd_df = st.session_state["ytd_df"].copy()
+                sales_df = st.session_state["sales_df"].copy()
+
+                # helper to find likely column names (more robust)
+                def find_col(df, candidates):
+                    for n in candidates:
+                        if n in df.columns:
+                            return n
+                    # fallback: substring match
+                    for c in df.columns:
+                        lc = c.lower()
+                        for n in candidates:
+                            if n.lower() in lc:
+                                return c
+                    return None
+
+                cust_candidates = ["SP Name1", "SP Name 1", "SP_Name1", "Customer", "PY Name1", "PY Name 1"]
+                date_candidates = ["Billing Date", "billing date", "Date"]
+                amount_candidates = ["Net Value", "NetAmount", "Net Amount", "Amount", "Sales Amount"]
+
+                cust_col_ytd = find_col(ytd_df, cust_candidates)
+                cust_col_sales = find_col(sales_df, cust_candidates)
+                date_col_ytd = find_col(ytd_df, date_candidates)
+                date_col_sales = find_col(sales_df, date_candidates)
+                amount_col = find_col(sales_df, amount_candidates)
+
+                # mandatory column checks
+                if cust_col_ytd is None:
+                    st.error("Could not find customer column (SP Name1) in YTD sheet. Columns found: " + ", ".join(ytd_df.columns))
+                elif cust_col_sales is None:
+                    st.error("Could not find customer column (SP Name1) in Sales sheet. Columns found: " + ", ".join(sales_df.columns))
+                elif date_col_ytd is None or date_col_sales is None:
+                    st.error("Could not find 'Billing Date' column in YTD or Sales sheet.")
+                elif amount_col is None:
+                    st.error("Could not find numeric sales amount column (e.g. 'Net Value' or 'Net Amount') in Sales sheet.")
+                else:
+                    # normalize date columns
+                    ytd_df[date_col_ytd] = pd.to_datetime(ytd_df[date_col_ytd], errors="coerce")
+                    sales_df[date_col_sales] = pd.to_datetime(sales_df[date_col_sales], errors="coerce")
+
+                    # determine customer list from YTD where billing date is in the last 3 months
+                    today = pd.to_datetime("today").normalize()
+                    last_3_months = today - pd.DateOffset(months=3)
+                    recent_ytd = ytd_df[ytd_df[date_col_ytd] >= last_3_months]
+                    customer_list = pd.Series(recent_ytd[cust_col_ytd].dropna().unique()).astype(str)
+
+                    if customer_list.empty:
+                        st.info("No customers in YTD with sales in the last 3 months.")
+                    else:
+                        # build days list = last 7 days excluding today: oldest -> newest
+                        days_dt = [today - pd.Timedelta(days=i) for i in range(7, 0, -1)]  # 7..1 days ago
+                        days_str = [d.strftime("%Y-%m-%d") for d in days_dt]
+
+                        # filter sales to the same last-7-days window (>= 7 days ago and < today)
+                        sales_window_start = days_dt[0].normalize()
+                        sales_window_end = today.normalize()  # exclusive
+                        sales_last7 = sales_df[
+                            (sales_df[date_col_sales] >= sales_window_start) &
+                            (sales_df[date_col_sales] < sales_window_end)
+                        ].copy()
+
+                        # normalize customer values to string for safe merging/matching
+                        sales_last7[cust_col_sales] = sales_last7[cust_col_sales].astype(str)
+                        customer_list = customer_list.astype(str)
+
+                        # group and sum amounts by customer + date string
+                        sales_last7["__date_str"] = sales_last7[date_col_sales].dt.strftime("%Y-%m-%d")
+                        # ensure amount column numeric
+                        sales_last7[amount_col] = pd.to_numeric(sales_last7[amount_col], errors="coerce").fillna(0.0)
+                        grouped = (
+                            sales_last7.groupby([cust_col_sales, "__date_str"], dropna=False)[amount_col]
+                            .sum()
+                            .reset_index()
+                            .rename(columns={cust_col_sales: "Customer", "__date_str": "Date", amount_col: "Amount"})
+                        )
+
+                        # pivot to have dates as columns
+                        pivot = grouped.pivot(index="Customer", columns="Date", values="Amount").reindex(columns=days_str, fill_value=0.0)
+
+                        # prepare base DataFrame with all customers from YTD (last 3 months), keep ordering
+                        base = pd.DataFrame({"Customer": customer_list})
+                        # Merge pivot amounts into base (left join so all YTD customers appear even if no visits)
+                        pivot_reset = pivot.reset_index().rename(columns={"Customer": "Customer"})
+                        visit_df = base.merge(pivot_reset, on="Customer", how="left").fillna(0.0)
+
+                        # ensure all day columns exist
+                        for d in days_str:
+                            if d not in visit_df.columns:
+                                visit_df[d] = 0.0
+
+                        # add Weekly Total column
+                        visit_df["Weekly Total"] = visit_df[days_str].sum(axis=1)
+
+                        # format numeric columns to integers (no decimals) for display
+                        visit_df[days_str + ["Weekly Total"]] = visit_df[days_str + ["Weekly Total"]].round(0).astype(int)
+
+                        # highlight function: 0 -> red, >0 -> green
+                        def _highlight(v):
+                            try:
+                                if int(v) == 0:
+                                    return "background-color: #F87171; color: white; font-weight: 700"
+                                else:
+                                    return "background-color: #4ADE80; color: black; font-weight: 700"
+                            except:
+                                return ""
+
+                        # show small summary: customers with zero visits at all in last 7 days
+                        no_visit_mask = (visit_df[days_str].sum(axis=1) == 0)
+                        customers_not_visited = visit_df.loc[no_visit_mask, "Customer"].tolist()
+                        total_customers_not_visited = int(no_visit_mask.sum())
+                        total_missed_cells = int((visit_df[days_str] == 0).sum().sum())
+
+                        # render table (styled)
+                        styled = visit_df.style.applymap(_highlight, subset=days_str + ["Weekly Total"]).format("{:,.0f}", subset=days_str + ["Weekly Total"])
+
+                        st.dataframe(styled, use_container_width=True)
+
+                        # messages & download
+                        if total_customers_not_visited == 0:
+                            st.success("✅ All listed customers had at least one visit in the last 7 days (excluding today).")
+                        else:
+                            st.warning(f"⚠️ {total_customers_not_visited} customer(s) had NO visits in the last 7 days (excluding today).")
+                            # --- Updated: show Not Visited as a small table ---
+                            st.subheader("🚫 Not Visited Customers (sample, max 25)")
+                            not_visited_df = pd.DataFrame({
+                                "No.": range(1, min(26, len(customers_not_visited)+1)),
+                                "Customer Name": customers_not_visited[:25]
+                            })
+                            st.dataframe(not_visited_df, use_container_width=True)
+
+                        st.info(f"Total missed visit cells (0s) in grid: {total_missed_cells:,}")
+
+                        # Download button
+                        try:
+                            excel_bytes = to_excel_bytes(visit_df, sheet_name="Weekly_Visit_Tracker", index=False)
+                            if st.download_button(
+                                "⬇️ Download Weekly Visit Tracker (Excel)",
+                                data=excel_bytes,
+                                file_name=f"weekly_visit_tracker_{today.strftime('%Y-%m-%d')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            ):
+                                st.session_state["audit_log"].append({
+                                    "user": username,
+                                    "action": "download",
+                                    "details": "Weekly Visit Tracker Excel",
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                        except Exception as e:
+                            st.error(f"Could not create download file: {e}")
+
 # --- Product Availability Checker Page ---
 elif choice == "Product Availability Checker":
     st.title("🛒 Product Availability Checker")
