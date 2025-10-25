@@ -66,6 +66,8 @@ texts = {
         "ai_insights": "AI Insights",
         "customer_insights": "Customer Insights",
         "customer_insights_title": "Customer Insights Dashboard",
+        "material_forecast": "Material Forecast",
+        "material_forecast_title": "📈 Material Forecast",
         "rfm_analysis_sub": "RFM Analysis",
         "rfm_table_sub": "RFM Table",
         "rfm_chart_sub": "RFM Visualization",
@@ -244,6 +246,8 @@ texts = {
         "ai_insights": "رؤى الذكاء الاصطناعي",
         "customer_insights": "رؤى العملاء",
         "customer_insights_title": "لوحة رؤى العملاء",
+        "material_forecast": "توقعات المواد",
+        "material_forecast_title": "📈 توقعات المواد",
         "rfm_analysis_sub": "تحليل RFM",
         "rfm_table_sub": "جدول RFM",
         "rfm_chart_sub": "تصور RFM",
@@ -862,11 +866,10 @@ menu = [
     texts[lang]["target_allocation"],
     texts[lang]["ai_insights"],
     texts[lang]["customer_insights"],
+    texts[lang]["material_forecast"],  # Add this line
     texts[lang]["product_availability_checker"]
 ]
-
 choice = st.sidebar.selectbox(texts[lang]["navigate"], menu)
-
 # Role-based filtering for data
 if "data_loaded" in st.session_state:
     sales_df = st.session_state["sales_df"].copy()
@@ -2789,13 +2792,19 @@ elif choice == "AI Insights":
 
             # New: MoM growth using latest available month as "current"
             current_month = effective_today.month
-            current_year = effective_today.year
+            current_year_mom = effective_today.year
             prev_month = current_month - 1 if current_month > 1 else 12
-            prev_month_year = current_year if current_month > 1 else current_year - 1
-            mom_current = ytd_df[(ytd_df["Billing Date"].dt.year == current_year) & (ytd_df["Billing Date"].dt.month == current_month)]["Net Value"].sum()
+            prev_month_year = current_year_mom if current_month > 1 else current_year_mom - 1
+            mom_current = ytd_df[(ytd_df["Billing Date"].dt.year == current_year_mom) & (ytd_df["Billing Date"].dt.month == current_month)]["Net Value"].sum()
             mom_prev = ytd_df[(ytd_df["Billing Date"].dt.year == prev_month_year) & (ytd_df["Billing Date"].dt.month == prev_month)]["Net Value"].sum()
             mom_diff = mom_current - mom_prev
             mom_pct = (mom_diff / mom_prev * 100) if mom_prev else np.nan
+
+            # NEW: Labels for months and years
+            current_month_label = effective_today.strftime("%B %Y")
+            prev_month_label = pd.to_datetime(f"{prev_month_year}-{prev_month}-01").strftime("%B %Y")
+            current_year_label = str(current_year)
+            prev_year_label = str(prev_year)
 
             return dict(
                 p1_start=p1_start.date(), p1_end=p1_end.date(),
@@ -2806,7 +2815,10 @@ elif choice == "AI Insights":
                 yoy_diff=yoy_diff, yoy_pct=yoy_pct,
                 mom_current=mom_current, mom_prev=mom_prev,
                 mom_diff=mom_diff, mom_pct=mom_pct,
-                latest_month_label=f"{effective_today.strftime('%B %Y')}"
+                latest_month_label=current_month_label,
+                prev_month_label=prev_month_label,
+                current_year_label=current_year_label,
+                prev_year_label=prev_year_label
             )
 
         ytd_pulse = ytd_quick_compare(ytd_df)
@@ -2949,6 +2961,68 @@ elif choice == "AI Insights":
 
         anomalies_ai = detect_anomalies(df_time_ai)
 
+        # NEW: RFM Integration for Customer Insights
+        today = pd.Timestamp.today().normalize()
+        rfm_ai = df_ai.groupby("SP Name1").agg({
+            "Billing Date": lambda x: (today - x.max()).days,
+            "Net Value": ["count", "sum"]
+        }).reset_index()
+        rfm_ai.columns = ["Customer", "Recency", "Frequency", "Monetary"]
+        rfm_ai = rfm_ai[rfm_ai["Monetary"] > 0]
+
+        if not rfm_ai.empty:
+            # Safe qcut function (from customer insights)
+            def safe_qcut(series, q=4, reverse=False):
+                s = series.copy().fillna(series.max() + 1)
+                unique_vals = s.unique()
+                n_unique = len(unique_vals)
+                if n_unique == 1:
+                    return pd.Series([1]*len(s), index=s.index)
+                if n_unique < q:
+                    ranks = s.rank(method='dense', ascending=not reverse)
+                    return ranks.astype(int)
+                labels = list(range(q, 0, -1)) if reverse else list(range(1, q+1))
+                try:
+                    return pd.qcut(s, q=q, labels=labels, duplicates='drop')
+                except ValueError:
+                    ranks = s.rank(method='dense', ascending=not reverse)
+                    return ranks.astype(int)
+
+            rfm_ai["R_Score"] = safe_qcut(rfm_ai["Recency"], q=4, reverse=True)
+            rfm_ai["F_Score"] = safe_qcut(rfm_ai["Frequency"], q=4)
+            rfm_ai["M_Score"] = safe_qcut(rfm_ai["Monetary"], q=4)
+            rfm_ai["RFM_Score"] = rfm_ai["R_Score"].astype(str) + rfm_ai["F_Score"].astype(str) + rfm_ai["M_Score"].astype(str)
+
+            def rfm_segment(row):
+                if row["RFM_Score"] in ["444", "443", "434", "433"]:
+                    return "Champions"
+                elif row["R_Score"] >= 3 and row["F_Score"] >= 3:
+                    return "Loyal Customers"
+                elif row["R_Score"] >= 3 and row["M_Score"] >= 3:
+                    return "Potential Loyalists"
+                elif row["R_Score"] >= 3:
+                    return "New Customers"
+                elif row["R_Score"] <= 2 and row["F_Score"] >= 2 and row["M_Score"] >= 2:
+                    return "At Risk"
+                elif row["R_Score"] <= 1 and row["F_Score"] >= 2 and row["M_Score"] >= 2:
+                    return "Hibernating"
+                else:
+                    return "Others"
+
+            rfm_ai["Segment"] = rfm_ai.apply(rfm_segment, axis=1)
+            segment_sales = rfm_ai.groupby("Segment")["Monetary"].sum().sort_values(ascending=False)
+        else:
+            segment_sales = pd.Series()
+
+        # NEW: Industry Benchmarking (Static for now; can integrate web_search later)
+        # Assuming some benchmark data; in production, use web_search tool
+        kuwait_retail_yoy_benchmark = 3.8  # Updated average from 3.13% CAGR retail and 4.5% CPG
+        if ytd_pulse and pd.notnull(ytd_pulse.get("yoy_pct")):
+            your_yoy = ytd_pulse["yoy_pct"]
+            benchmark_insight = f"Your YoY growth: {your_yoy:.1f}% vs. Kuwait retail avg ~{kuwait_retail_yoy_benchmark}%."
+        else:
+            benchmark_insight = "Benchmark data requires YTD comparison."
+
         # --- AI-style narrative generation (rule-based, data-driven; no change to your formulas) ---
         def fmt_kd(x):
             try:
@@ -3008,14 +3082,16 @@ elif choice == "AI Insights":
             yoy_trend = "up" if p["yoy_diff"] > 0 else "down" if p["yoy_diff"] < 0 else "flat"
             yoy_pct_txt = f"{p['yoy_pct']:.0f}%" if pd.notnull(p["yoy_pct"]) else "N/A"
             summary_lines.append(
-                f"- YoY YTD: {yoy_trend} by {fmt_kd(abs(p['yoy_diff']))} ({yoy_pct_txt}). "
+                f"- YoY YTD ({p['current_year_label']} vs {p['prev_year_label']}): {yoy_trend} by {fmt_kd(abs(p['yoy_diff']))} ({yoy_pct_txt}). "
                 f"Latest year: {fmt_kd(p['ytd_current'])}, Prev year: {fmt_kd(p['ytd_prev'])}."
             )
+            # NEW: Benchmark
+            summary_lines.append(f"- {benchmark_insight}")
             mom_trend = "up" if p["mom_diff"] > 0 else "down" if p["mom_diff"] < 0 else "flat"
             mom_pct_txt = f"{p['mom_pct']:.0f}%" if pd.notnull(p["mom_pct"]) else "N/A"
             summary_lines.append(
-                f"- MoM: {mom_trend} by {fmt_kd(abs(p['mom_diff']))} ({mom_pct_txt}). "
-                f"Latest month ({p['latest_month_label']}): {fmt_kd(p['mom_current'])}, Prev month: {fmt_kd(p['mom_prev'])}."
+                f"- MoM ({p['latest_month_label']} vs {p['prev_month_label']}): {mom_trend} by {fmt_kd(abs(p['mom_diff']))} ({mom_pct_txt}). "
+                f"Latest month: {fmt_kd(p['mom_current'])}, Prev month: {fmt_kd(p['mom_prev'])}."
             )
 
         # Allocation pulse
@@ -3049,6 +3125,12 @@ elif choice == "AI Insights":
                 top_ch_sales = max(c['channel_sales'], key=c['channel_sales'].get)
                 summary_lines.append(f"- Highest sales channel: {top_ch_sales} with {fmt_kd(c['channel_sales'][top_ch_sales])}.")
 
+        # NEW: RFM Summary
+        if not segment_sales.empty:
+            top_segment = segment_sales.index[0]
+            top_seg_val = segment_sales.iloc[0]
+            summary_lines.append(f"- Top customer segment (RFM): {top_segment} with {fmt_kd(top_seg_val)} ({(top_seg_val/segment_sales.sum()*100):.0f}% of total).")
+
         st.write("\n".join(summary_lines))
 
         # New: Prescriptive recommendations
@@ -3064,14 +3146,19 @@ elif choice == "AI Insights":
             rec_lines.append("- Negative YoY growth: Analyze competitors or internal changes; suggest targeted campaigns.")
         if ytd_pulse and ytd_pulse['mom_current'] == 0:
             rec_lines.append("- No data for latest month: Ensure data is up-to-date or check for upload issues.")
+        # NEW: RFM-based rec
+        if not segment_sales.empty and "Champions" in segment_sales.index and (segment_sales["Champions"] / segment_sales.sum() < 0.3):
+            rec_lines.append("- Champions segment under 30% of sales: Focus retention campaigns.")
         st.write("\n".join(rec_lines) if rec_lines else "- All metrics look stable; maintain current strategies.")
 
         # New: Visualizations for AI Insights
         st.subheader("📊 AI-Generated Visuals")
         if exp_forecast is not None:
             fig_exp = go.Figure()
-            fig_exp.add_trace(go.Scatter(x=df_time_ai["ds"], y=df_time_ai["y"], mode='lines+markers', name='Actual', line=dict(color='#1E3A8A')))
-            fig_exp.add_trace(go.Scatter(x=pd.date_range(df_time_ai["ds"].max() + pd.Timedelta(days=1), periods=30), y=exp_forecast, mode='lines', name='Holt-Winters Forecast', line=dict(color='#EF4444', dash='dash')))
+            fig_exp.add_trace(go.Scatter(x=df_time_ai["ds"], y=df_time_ai["y"], mode='lines+markers', name='Actual', line=dict(color='#1E3A8A'),
+                                         hovertemplate='Date: %{x|%Y-%m-%d}<br>Value: %{y:,.0f} KD<extra></extra>'))
+            fig_exp.add_trace(go.Scatter(x=pd.date_range(df_time_ai["ds"].max() + pd.Timedelta(days=1), periods=30), y=exp_forecast, mode='lines', name='Holt-Winters Forecast', line=dict(color='#EF4444', dash='dash'),
+                                         hovertemplate='Date: %{x|%Y-%m-%d}<br>Forecast: %{y:,.0f} KD<extra></extra>'))
             fig_exp.update_layout(title="Advanced Sales Forecast (Holt-Winters)", xaxis_title="Date", yaxis_title="Net Value (KD)")
             st.plotly_chart(fig_exp, use_container_width=True)
         else:
@@ -3079,26 +3166,165 @@ elif choice == "AI Insights":
 
         if lin_forecast is not None:
             fig_lin = go.Figure()
-            fig_lin.add_trace(go.Scatter(x=df_time_ai["ds"], y=df_time_ai["y"], mode='lines+markers', name='Actual', line=dict(color='#1E3A8A')))
-            fig_lin.add_trace(go.Scatter(x=pd.date_range(df_time_ai["ds"].max() + pd.Timedelta(days=1), periods=30), y=lin_forecast, mode='lines', name='Linear Trend Forecast', line=dict(color='#10B981', dash='dot')))
+            fig_lin.add_trace(go.Scatter(x=df_time_ai["ds"], y=df_time_ai["y"], mode='lines+markers', name='Actual', line=dict(color='#1E3A8A'),
+                                         hovertemplate='Date: %{x|%Y-%m-%d}<br>Value: %{y:,.0f} KD<extra></extra>'))
+            fig_lin.add_trace(go.Scatter(x=pd.date_range(df_time_ai["ds"].max() + pd.Timedelta(days=1), periods=30), y=lin_forecast, mode='lines', name='Linear Trend Forecast', line=dict(color='#10B981', dash='dot'),
+                                         hovertemplate='Date: %{x|%Y-%m-%d}<br>Forecast: %{y:,.0f} KD<extra></extra>'))
             fig_lin.update_layout(title="Linear Trend Sales Forecast", xaxis_title="Date", yaxis_title="Net Value (KD)")
             st.plotly_chart(fig_lin, use_container_width=True)
 
         if ytd_pulse and pd.notnull(ytd_pulse["yoy_pct"]):
             yoy_df = pd.DataFrame({
-                "Year": ["Prev Year", "Latest Year"],
+                "Year": [f"Prev Year ({ytd_pulse['prev_year_label']})", f"Latest Year ({ytd_pulse['current_year_label']})"],
                 "YTD Sales": [ytd_pulse["ytd_prev"], ytd_pulse["ytd_current"]]
             })
+            yoy_pct = ytd_pulse['yoy_pct'] if pd.notnull(ytd_pulse['yoy_pct']) else 0
             fig_yoy = px.bar(yoy_df, x="Year", y="YTD Sales", title="YoY YTD Sales Comparison")
+            fig_yoy.update_traces(
+                texttemplate='%{y:,.0f} KD',
+                textposition='auto',
+                hovertemplate='<b>%{x}</b><br>Sales: %{y:,.0f} KD<br>Change: %{customdata[0]:.1f}%<extra></extra>',
+                customdata=[[0], [yoy_pct]]  # Custom data for percentage in hover
+            )
+            fig_yoy.add_annotation(
+                x=1, y=yoy_df['YTD Sales'][1],
+                text=f"{yoy_pct:.1f}%",
+                showarrow=True,
+                arrowhead=1,
+                yshift=10 if yoy_pct >= 0 else -10
+            )
             st.plotly_chart(fig_yoy, use_container_width=True)
 
         if ytd_pulse and pd.notnull(ytd_pulse["mom_pct"]):
             mom_df = pd.DataFrame({
-                "Month": ["Prev Month", "Latest Month"],
+                "Month": [f"Prev Month ({ytd_pulse['prev_month_label']})", f"Latest Month ({ytd_pulse['latest_month_label']})"],
                 "Sales": [ytd_pulse["mom_prev"], ytd_pulse["mom_current"]]
             })
+            mom_pct = ytd_pulse['mom_pct'] if pd.notnull(ytd_pulse['mom_pct']) else 0
             fig_mom = px.bar(mom_df, x="Month", y="Sales", title="MoM Sales Comparison")
+            fig_mom.update_traces(
+                texttemplate='%{y:,.0f} KD',
+                textposition='auto',
+                hovertemplate='<b>%{x}</b><br>Sales: %{y:,.0f} KD<br>Change: %{customdata[0]:.1f}%<extra></extra>',
+                customdata=[[0], [mom_pct]]  # Custom data for percentage in hover
+            )
+            fig_mom.add_annotation(
+                x=1, y=mom_df['Sales'][1],
+                text=f"{mom_pct:.1f}%",
+                showarrow=True,
+                arrowhead=1,
+                yshift=10 if mom_pct >= 0 else -10
+            )
             st.plotly_chart(fig_mom, use_container_width=True)
+
+        # NEW: Weekly Visit Tracker Analysis (no table repetition)
+        st.subheader("Weekly Visit Tracker Analysis")
+        if "ytd_df" not in st.session_state or st.session_state["ytd_df"].empty:
+            st.info("YTD sheet is missing or empty in session state.")
+        elif "sales_df" not in st.session_state or st.session_state["sales_df"].empty:
+            st.info("Sales sheet is missing or empty in session state.")
+        else:
+            ytd_df = st.session_state["ytd_df"].copy()
+            sales_df = st.session_state["sales_df"].copy()
+
+            # Helper to find columns
+            def find_col(df, candidates):
+                for n in candidates:
+                    if n in df.columns:
+                        return n
+                for c in df.columns:
+                    lc = c.lower()
+                    for n in candidates:
+                        if n.lower() in lc:
+                            return c
+                return None
+
+            cust_candidates = ["SP Name1", "SP Name 1", "SP_Name1", "Customer", "PY Name1", "PY Name 1"]
+            date_candidates = ["Billing Date", "billing date", "Date"]
+            amount_candidates = ["Net Value", "NetAmount", "Net Amount", "Amount", "Sales Amount"]
+
+            cust_col_ytd = find_col(ytd_df, cust_candidates)
+            cust_col_sales = find_col(sales_df, cust_candidates)
+            date_col_ytd = find_col(ytd_df, date_candidates)
+            date_col_sales = find_col(sales_df, date_candidates)
+            amount_col = find_col(sales_df, amount_candidates)
+
+            if None in [cust_col_ytd, cust_col_sales, date_col_ytd, date_col_sales, amount_col]:
+                st.error("Missing required columns for Weekly Visit Tracker.")
+            else:
+                ytd_df[date_col_ytd] = pd.to_datetime(ytd_df[date_col_ytd], errors="coerce")
+                sales_df[date_col_sales] = pd.to_datetime(sales_df[date_col_sales], errors="coerce")
+
+                last_3_months = today - pd.DateOffset(months=3)
+                recent_ytd = ytd_df[ytd_df[date_col_ytd] >= last_3_months]
+                customer_list = pd.Series(recent_ytd[cust_col_ytd].dropna().unique()).astype(str)
+
+                if customer_list.empty:
+                    st.info("No customers in YTD with sales in the last 3 months.")
+                else:
+                    days_dt = [today - pd.Timedelta(days=i) for i in range(7, 0, -1)]
+                    days_str = [d.strftime("%Y-%m-%d") for d in days_dt]
+
+                    sales_window_start = days_dt[0].normalize()
+                    sales_window_end = today.normalize()
+                    sales_last7 = sales_df[
+                        (sales_df[date_col_sales] >= sales_window_start) &
+                        (sales_df[date_col_sales] < sales_window_end)
+                    ].copy()
+                    sales_last7[cust_col_sales] = sales_last7[cust_col_sales].astype(str)
+                    sales_last7[amount_col] = pd.to_numeric(sales_last7[amount_col], errors="coerce").fillna(0.0)
+
+                    sales_last7["__date_str"] = sales_last7[date_col_sales].dt.strftime("%Y-%m-%d")
+                    pivot = sales_last7.groupby([cust_col_sales, "__date_str"], dropna=False)[amount_col] \
+                                     .sum().reset_index().pivot(index=cust_col_sales, columns="__date_str", values=amount_col) \
+                                     .reindex(columns=days_str, fill_value=0.0).reset_index()
+                    pivot = pivot.rename(columns={cust_col_sales: "Customer"})
+
+                    base = pd.DataFrame({"Customer": customer_list})
+                    visit_df = base.merge(pivot, on="Customer", how="left").fillna(0.0)
+
+                    visit_df["Weekly Total"] = visit_df[days_str].sum(axis=1)
+
+                    recent_sales_3m = sales_df[sales_df[date_col_sales] >= last_3_months].copy()
+                    recent_sales_3m[amount_col] = pd.to_numeric(recent_sales_3m[amount_col], errors="coerce").fillna(0.0)
+                    total_sales = recent_sales_3m.groupby(cust_col_sales)[amount_col].sum().reset_index().rename(
+                        columns={cust_col_sales: "Customer", amount_col: "Total Sales"}
+                    )
+                    visit_df = visit_df.merge(total_sales, on="Customer", how="left").fillna(0.0)
+
+                    def alert_level(row):
+                        if row["Weekly Total"] == 0:
+                            if row["Total Sales"] >= visit_df["Total Sales"].quantile(0.8):
+                                return "🔴 High"
+                            elif row["Total Sales"] >= visit_df["Total Sales"].quantile(0.5):
+                                return "🟠 Medium"
+                            else:
+                                return "🟢 Low"
+                        else:
+                            return "✅ Visited"
+
+                    visit_df["Alert Level"] = visit_df.apply(alert_level, axis=1)
+                    visit_df[days_str + ["Weekly Total", "Total Sales"]] = visit_df[days_str + ["Weekly Total", "Total Sales"]].round(0).astype(int)
+
+                    # Analysis
+                    high_value_not_visited = visit_df[visit_df["Alert Level"] == "🔴 High"].shape[0]
+                    at_risk_sales = visit_df[visit_df["Alert Level"].str.contains("High|Medium")]["Total Sales"].sum()
+                    top_missed = visit_df[visit_df["Alert Level"] == "🔴 High"].sort_values("Total Sales", ascending=False).head(5)["Customer"].tolist()
+                    missed_mask = visit_df["Weekly Total"] == 0
+                    total_not_visited = int(missed_mask.sum())
+                    total_missed_cells = int((visit_df[days_str] == 0).sum().sum())
+
+                    st.write(f"- High-value customers not visited: {high_value_not_visited}")
+                    st.write(f"- Potential sales at risk (High/Medium alerts): {fmt_kd(at_risk_sales)}")
+                    if top_missed:
+                        st.write(f"- Top 5 missed high-value customers: {', '.join(top_missed)}")
+                    st.info(f"- Total missed visit cells: {total_missed_cells:,}")
+                    st.warning(f"- Total customers with NO visits in last 7 days: {total_not_visited}")
+
+                    # Pie chart for alert levels
+                    fig_alert = px.pie(visit_df, names="Alert Level", title="Customer Alert Levels Distribution", hole=0.3)
+                    fig_alert.update_traces(hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>')
+                    st.plotly_chart(fig_alert, use_container_width=True)
 
         # --- Structured “Insights by section” mirrors your pages ---
         st.markdown("---")
@@ -3131,8 +3357,9 @@ elif choice == "AI Insights":
             if ytd_pulse:
                 p = ytd_pulse
                 st.write(f"- Last 30 days vs prior: {fmt_kd(p['total_p2'])} vs {fmt_kd(p['total_p1'])} → Δ {fmt_kd(p['diff'])} ({(p['pct'] if pd.notnull(p['pct']) else 0):.0f}%).")
-                st.write(f"- YoY YTD: {fmt_kd(p['ytd_current'])} vs {fmt_kd(p['ytd_prev'])} → Δ {fmt_kd(p['yoy_diff'])} ({(p['yoy_pct'] if pd.notnull(p['yoy_pct']) else 0):.0f}%).")
-                st.write(f"- MoM: {fmt_kd(p['mom_current'])} vs {fmt_kd(p['mom_prev'])} → Δ {fmt_kd(p['mom_diff'])} ({(p['mom_pct'] if pd.notnull(p['mom_pct']) else 0):.0f}%).")
+                st.write(f"- YoY YTD ({p['current_year_label']} vs {p['prev_year_label']}): {fmt_kd(p['ytd_current'])} vs {fmt_kd(p['ytd_prev'])} → Δ {fmt_kd(p['yoy_diff'])} ({(p['yoy_pct'] if pd.notnull(p['yoy_pct']) else 0):.0f}%).")
+                st.write(f"- {benchmark_insight}")
+                st.write(f"- MoM ({p['latest_month_label']} vs {p['prev_month_label']}): {fmt_kd(p['mom_current'])} vs {fmt_kd(p['mom_prev'])} → Δ {fmt_kd(p['mom_diff'])} ({(p['mom_pct'] if pd.notnull(p['mom_pct']) else 0):.0f}%).")
             else:
                 st.write("- YTD data not available for pulse.")
 
@@ -3179,6 +3406,14 @@ elif choice == "AI Insights":
             else:
                 st.write("- Channels data not available.")
 
+        # NEW: Customer Insights Expander
+        with st.expander("Customer Insights (RFM)"):
+            if not segment_sales.empty:
+                st.write(f"- Top segment: {segment_sales.index[0]} with {fmt_kd(segment_sales.iloc[0])} ({(segment_sales.iloc[0]/segment_sales.sum()*100):.0f}% of total).")
+                st.dataframe(segment_sales.to_frame(name="Monetary Value"))
+            else:
+                st.write("- No RFM data available.")
+
         # --- Downloadable narrative ---
         st.markdown("---")
         st.subheader("📥 Download executive summary")
@@ -3197,8 +3432,9 @@ Sales Tracking Insights:
 
 YTD Comparison:
 {f"- {fmt_kd(ytd_pulse['total_p2'])} vs {fmt_kd(ytd_pulse['total_p1'])} (Δ {fmt_kd(ytd_pulse['diff'])}, {(ytd_pulse['pct'] if ytd_pulse and pd.notnull(ytd_pulse['pct']) else 0):.0f}%)" if ytd_pulse else "- Not available"}
-{f"- YoY: {fmt_kd(ytd_pulse['ytd_current'])} vs {fmt_kd(ytd_pulse['ytd_prev'])} (Δ {fmt_kd(ytd_pulse['yoy_diff'])}, {(ytd_pulse['yoy_pct'] if ytd_pulse and pd.notnull(ytd_pulse['yoy_pct']) else 0):.0f}%)" if ytd_pulse else ""}
-{f"- MoM: {fmt_kd(ytd_pulse['mom_current'])} vs {fmt_kd(ytd_pulse['mom_prev'])} (Δ {fmt_kd(ytd_pulse['mom_diff'])}, {(ytd_pulse['mom_pct'] if ytd_pulse and pd.notnull(ytd_pulse['mom_pct']) else 0):.0f}%)" if ytd_pulse else ""}
+{f"- YoY ({ytd_pulse['current_year_label']} vs {ytd_pulse['prev_year_label']}): {fmt_kd(ytd_pulse['ytd_current'])} vs {fmt_kd(ytd_pulse['ytd_prev'])} (Δ {fmt_kd(ytd_pulse['yoy_diff'])}, {(ytd_pulse['yoy_pct'] if ytd_pulse and pd.notnull(ytd_pulse['yoy_pct']) else 0):.0f}%)" if ytd_pulse else ""}
+{f"- {benchmark_insight}" if benchmark_insight else ""}
+{f"- MoM ({ytd_pulse['latest_month_label']} vs {ytd_pulse['prev_month_label']}): {fmt_kd(ytd_pulse['mom_current'])} vs {fmt_kd(ytd_pulse['mom_prev'])} (Δ {fmt_kd(ytd_pulse['mom_diff'])}, {(ytd_pulse['mom_pct'] if ytd_pulse and pd.notnull(ytd_pulse['mom_pct']) else 0):.0f}%)" if ytd_pulse else ""}
 
 SP/PY Allocation:
 {f"- Avg monthly {fmt_kd(alloc_pulse['avg_hist'])}, target {fmt_kd(alloc_pulse['allocated_target'])}, lift {alloc_pulse['inc_needed_pct']:.0f}%, month-to-date {fmt_kd(alloc_pulse['current_month_total'])}" if alloc_pulse else "- Not available"}
@@ -3209,6 +3445,9 @@ Target Sheet:
 
 Channels Sheet:
 {f"- Dist: {', '.join([f'{k}: {v}' for k,v in channels_pulse['channel_dist'].items()])}, Top: {channels_pulse['top_channel']}" if channels_pulse else "- Not available"}
+
+Customer RFM:
+{f"- Top segment: {segment_sales.index[0]} with {fmt_kd(segment_sales.iloc[0])}" if not segment_sales.empty else "- Not available"}
 """
         if st.download_button(
             "💾 Download AI executive summary (TXT)",
@@ -3289,6 +3528,12 @@ Channels Sheet:
                     answer_lines.append("- No anomalies detected.")
             elif "recommend" in q or "suggest" in q:
                 answer_lines = rec_lines
+            elif "segment" in q or "rfm" in q:
+                if not segment_sales.empty:
+                    for seg, val in segment_sales.head(5).items():
+                        answer_lines.append(f"- {seg}: {fmt_kd(val)}")
+                else:
+                    answer_lines.append("- No RFM segment data available.")
             else:
                 # Default: provide quick highlights
                 answer_lines.append(f"- Total sales in period: {fmt_kd(total_sales_all)}")
@@ -3297,8 +3542,7 @@ Channels Sheet:
                 if total_tal_target_all_ai > 0:
                     answer_lines.append(f"- Talabat achievement: {tal_ach_pct:.0f}%")
 
-            st.write("\n".join(answer_lines))
-            
+            st.write("\n".join(answer_lines))            
             
 # --- Customer Insights Page ---
 elif choice == texts[lang]["customer_insights"]:
@@ -3412,7 +3656,64 @@ elif choice == texts[lang]["customer_insights"]:
                 "timestamp": datetime.now().isoformat()
             })
 
-        # RFM Scatter Plot
+        # Enhanced: RFM Segment Distribution Pie Chart
+        st.subheader("RFM Segment Distribution")
+        segment_counts = rfm_df["Segment"].value_counts().reset_index()
+        segment_counts.columns = ["Segment", "Count"]
+        segment_counts["Percentage"] = (segment_counts["Count"] / segment_counts["Count"].sum() * 100).round(1)
+        segment_avg_monetary = rfm_df.groupby("Segment")["Monetary"].mean().round(2).reset_index()
+        segment_counts = segment_counts.merge(segment_avg_monetary, on="Segment")
+
+        fig_segment_pie = px.pie(
+            segment_counts,
+            values="Count",
+            names="Segment",
+            title="RFM Segment Distribution",
+            hole=0.3,
+            hover_data=["Percentage", "Monetary"]
+        )
+        fig_segment_pie.update_traces(
+            textposition='inside',
+            textinfo='percent+label',
+            hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{customdata[0]}%<br>Avg Monetary: %{customdata[1]:,.2f} KD<extra></extra>',
+            customdata=segment_counts[["Percentage", "Monetary"]].values
+        )
+        st.plotly_chart(fig_segment_pie, use_container_width=True)
+
+        # Enhanced: Key Metrics per Segment Table
+        st.subheader("Key Metrics per RFM Segment")
+        segment_metrics = rfm_df.groupby("Segment").agg(
+            mean_recency=("Recency", "mean"),
+            mean_frequency=("Frequency", "mean"),
+            mean_monetary=("Monetary", "mean"),
+            count=("Recency", "count")  # Use existing column for count
+        ).round(2).rename(columns={"count": "Count"})
+        st.dataframe(segment_metrics, use_container_width=True)
+
+        # Download Segment Metrics
+        csv_segment = segment_metrics.to_csv().encode('utf-8')
+        st.download_button(
+            "Download Segment Metrics (CSV)",
+            data=csv_segment,
+            file_name=f"rfm_segment_metrics_{timestamp}.csv",
+            mime="text/csv"
+        )
+
+        # Enhanced: Prescriptive Recommendations per Segment
+        st.subheader("Prescriptive Actions per Segment")
+        recommendations = {
+            "Champions": "Reward with exclusive offers, loyalty programs, and upsell high-value items to maintain engagement.",
+            "Loyal Customers": "Encourage referrals and provide personalized recommendations to increase frequency.",
+            "Potential Loyalists": "Nurture with targeted campaigns to boost frequency and convert to Loyal Customers.",
+            "New Customers": "Onboard effectively with welcome discounts to encourage repeat purchases.",
+            "At Risk": "Re-engage with win-back offers, surveys, or limited-time promotions.",
+            "Hibernating": "Reactivate with aggressive discounts or reminders of past purchases.",
+            "Others": "Analyze further and test general marketing strategies."
+        }
+        for seg in segment_metrics.index:
+            st.write(f"- **{seg}**: {recommendations.get(seg, 'General engagement strategies recommended.')}")
+
+        # RFM Scatter Plot (kept as is)
         st.subheader(texts[lang]["rfm_chart_sub"])
         fig_rfm = px.scatter(
             rfm_df.reset_index(),
@@ -3479,140 +3780,338 @@ elif choice == texts[lang]["customer_insights"]:
         else:
             st.warning(texts[lang]["rfm_cohort_no_data"])
 
+# ---------------- Weekly Visit Tracker Tab ----------------
+        with tab3:
+            st.subheader("Weekly Visit Tracker with High-Value Alerts")
 
-    # ---------------- Weekly Visit Tracker Tab ----------------
-    with tab3:
-        st.subheader("Weekly Visit Tracker with High-Value Alerts")
+            # --- Date selection: Auto or Manual ---
+            st.write("📅 Select how you want to record the visit date:")
+            auto_date = st.toggle("Use current date automatically", value=True)
 
-        if "ytd_df" not in st.session_state or st.session_state["ytd_df"].empty:
-            st.info("YTD sheet is missing or empty in session state.")
-        elif "sales_df" not in st.session_state or st.session_state["sales_df"].empty:
-            st.info("Sales sheet is missing or empty in session state.")
-        else:
-            ytd_df = st.session_state["ytd_df"].copy()
-            sales_df = st.session_state["sales_df"].copy()
-
-            # Helper to find columns
-            def find_col(df, candidates):
-                for n in candidates:
-                    if n in df.columns:
-                        return n
-                for c in df.columns:
-                    lc = c.lower()
-                    for n in candidates:
-                        if n.lower() in lc:
-                            return c
-                return None
-
-            cust_candidates = ["SP Name1", "SP Name 1", "SP_Name1", "Customer", "PY Name1", "PY Name 1"]
-            date_candidates = ["Billing Date", "billing date", "Date"]
-            amount_candidates = ["Net Value", "NetAmount", "Net Amount", "Amount", "Sales Amount"]
-
-            cust_col_ytd = find_col(ytd_df, cust_candidates)
-            cust_col_sales = find_col(sales_df, cust_candidates)
-            date_col_ytd = find_col(ytd_df, date_candidates)
-            date_col_sales = find_col(sales_df, date_candidates)
-            amount_col = find_col(sales_df, amount_candidates)
-
-            if None in [cust_col_ytd, cust_col_sales, date_col_ytd, date_col_sales, amount_col]:
-                st.error("Missing required columns for Weekly Visit Tracker.")
+            if auto_date:
+                selected_date = datetime.now().date()
+                st.info(f"✅ Auto-selected current date: {selected_date}")
             else:
-                ytd_df[date_col_ytd] = pd.to_datetime(ytd_df[date_col_ytd], errors="coerce")
-                sales_df[date_col_sales] = pd.to_datetime(sales_df[date_col_sales], errors="coerce")
+                selected_date = st.date_input("Select visit date manually", datetime.now().date())
 
-                last_3_months = today - pd.DateOffset(months=3)
-                recent_ytd = ytd_df[ytd_df[date_col_ytd] >= last_3_months]
-                customer_list = pd.Series(recent_ytd[cust_col_ytd].dropna().unique()).astype(str)
+            st.session_state["visit_date"] = selected_date
 
-                if customer_list.empty:
-                    st.info("No customers in YTD with sales in the last 3 months.")
+            if "ytd_df" not in st.session_state or st.session_state["ytd_df"].empty:
+                st.info("YTD sheet is missing or empty in session state.")
+            elif "sales_df" not in st.session_state or st.session_state["sales_df"].empty:
+                st.info("Sales sheet is missing or empty in session state.")
+            else:
+                ytd_df = st.session_state["ytd_df"].copy()
+                sales_df = st.session_state["sales_df"].copy()
+
+                # --- Helper to detect columns dynamically ---
+                def find_col(df, candidates):
+                    for n in candidates:
+                        if n in df.columns:
+                            return n
+                    for c in df.columns:
+                        lc = c.lower()
+                        for n in candidates:
+                            if n.lower() in lc:
+                                return c
+                    return None
+
+                cust_candidates = ["SP Name1", "SP Name 1", "SP_Name1", "Customer", "PY Name1", "PY Name 1"]
+                date_candidates = ["Billing Date", "billing date", "Date"]
+                amount_candidates = ["Net Value", "NetAmount", "Net Amount", "Amount", "Sales Amount"]
+
+                cust_col_ytd = find_col(ytd_df, cust_candidates)
+                cust_col_sales = find_col(sales_df, cust_candidates)
+                date_col_ytd = find_col(ytd_df, date_candidates)
+                date_col_sales = find_col(sales_df, date_candidates)
+                amount_col = find_col(sales_df, amount_candidates)
+
+                if None in [cust_col_ytd, cust_col_sales, date_col_ytd, date_col_sales, amount_col]:
+                    st.error("Missing required columns for Weekly Visit Tracker.")
                 else:
-                    days_dt = [today - pd.Timedelta(days=i) for i in range(7, 0, -1)]
-                    days_str = [d.strftime("%Y-%m-%d") for d in days_dt]
+                    ytd_df[date_col_ytd] = pd.to_datetime(ytd_df[date_col_ytd], errors="coerce")
+                    sales_df[date_col_sales] = pd.to_datetime(sales_df[date_col_sales], errors="coerce")
 
-                    sales_window_start = days_dt[0].normalize()
-                    sales_window_end = today.normalize()
-                    sales_last7 = sales_df[
-                        (sales_df[date_col_sales] >= sales_window_start) &
-                        (sales_df[date_col_sales] < sales_window_end)
-                    ].copy()
-                    sales_last7[cust_col_sales] = sales_last7[cust_col_sales].astype(str)
-                    sales_last7[amount_col] = pd.to_numeric(sales_last7[amount_col], errors="coerce").fillna(0.0)
+                    # --- Customer list (last 3 months) ---
+                    last_3_months = today - pd.DateOffset(months=3)
+                    recent_ytd = ytd_df[ytd_df[date_col_ytd] >= last_3_months]
+                    customer_list = pd.Series(recent_ytd[cust_col_ytd].dropna().unique()).astype(str)
 
-                    sales_last7["__date_str"] = sales_last7[date_col_sales].dt.strftime("%Y-%m-%d")
-                    pivot = sales_last7.groupby([cust_col_sales, "__date_str"], dropna=False)[amount_col] \
-                                     .sum().reset_index().pivot(index=cust_col_sales, columns="__date_str", values=amount_col) \
-                                     .reindex(columns=days_str, fill_value=0.0).reset_index()
-                    pivot = pivot.rename(columns={cust_col_sales: "Customer"})
+                    if customer_list.empty:
+                        st.info("No customers in YTD with sales in the last 3 months.")
+                    else:
+                        # --- Generate last 7 days dynamically ---
+                        days_dt = [selected_date - pd.Timedelta(days=i) for i in range(6, -1, -1)]
+                        days_str = [d.strftime("%Y-%m-%d") for d in days_dt]
 
-                    base = pd.DataFrame({"Customer": customer_list})
-                    visit_df = base.merge(pivot, on="Customer", how="left").fillna(0.0)
+                        sales_window_start = pd.Timestamp(days_dt[0])
+                        sales_window_end = pd.Timestamp(selected_date) + pd.Timedelta(days=1)
 
-                    visit_df["Weekly Total"] = visit_df[days_str].sum(axis=1)
+                        sales_last7 = sales_df[
+                            (sales_df[date_col_sales] >= sales_window_start)
+                            & (sales_df[date_col_sales] < sales_window_end)
+                        ].copy()
 
-                    recent_sales_3m = sales_df[sales_df[date_col_sales] >= last_3_months].copy()
-                    recent_sales_3m[amount_col] = pd.to_numeric(recent_sales_3m[amount_col], errors="coerce").fillna(0.0)
-                    total_sales = recent_sales_3m.groupby(cust_col_sales)[amount_col].sum().reset_index().rename(
-                        columns={cust_col_sales: "Customer", amount_col: "Total Sales"}
-                    )
-                    visit_df = visit_df.merge(total_sales, on="Customer", how="left").fillna(0.0)
+                        sales_last7[cust_col_sales] = sales_last7[cust_col_sales].astype(str)
+                        sales_last7[amount_col] = pd.to_numeric(sales_last7[amount_col], errors="coerce").fillna(0.0)
 
-                    def alert_level(row):
-                        if row["Weekly Total"] == 0:
-                            if row["Total Sales"] >= visit_df["Total Sales"].quantile(0.8):
-                                return "🔴 High"
-                            elif row["Total Sales"] >= visit_df["Total Sales"].quantile(0.5):
-                                return "🟠 Medium"
+                        # --- Create pivot for last 7 days ---
+                        sales_last7["__date_str"] = sales_last7[date_col_sales].dt.strftime("%Y-%m-%d")
+                        pivot = (
+                            sales_last7.groupby([cust_col_sales, "__date_str"], dropna=False)[amount_col]
+                            .sum()
+                            .reset_index()
+                            .pivot(index=cust_col_sales, columns="__date_str", values=amount_col)
+                            .reindex(columns=days_str, fill_value=0.0)
+                            .reset_index()
+                        )
+                        pivot = pivot.rename(columns={cust_col_sales: "Customer"})
+
+                        base = pd.DataFrame({"Customer": customer_list})
+                        visit_df = base.merge(pivot, on="Customer", how="left").fillna(0.0)
+                        visit_df.insert(1, "Visit Date", selected_date)
+
+                        # --- Add Weekly Total ---
+                        visit_df["Weekly Total"] = visit_df[days_str].sum(axis=1)
+
+                        # --- Compute 4 Weekly Totals (last 4 weeks) ---
+                        end_date = pd.Timestamp(selected_date)
+                        start_date = end_date - pd.Timedelta(weeks=4)
+                        recent_sales = sales_df[
+                            (sales_df[date_col_sales] >= start_date)
+                            & (sales_df[date_col_sales] <= end_date)
+                        ].copy()
+
+                        recent_sales[cust_col_sales] = recent_sales[cust_col_sales].astype(str)
+                        recent_sales[amount_col] = pd.to_numeric(recent_sales[amount_col], errors="coerce").fillna(0.0)
+                        recent_sales["Week_Number"] = ((recent_sales[date_col_sales] - start_date).dt.days // 7) + 1
+                        recent_sales.loc[recent_sales["Week_Number"] > 4, "Week_Number"] = 4
+
+                        week_totals = (
+                            recent_sales.groupby([cust_col_sales, "Week_Number"])[amount_col]
+                            .sum()
+                            .unstack(fill_value=0)
+                            .reset_index()
+                            .rename(columns={cust_col_sales: "Customer"})
+                        )
+
+                        # --- Create dynamic week column names ---
+                        week_headers = []
+                        for i in range(4):
+                            week_start = (start_date + pd.Timedelta(days=i * 7)).strftime("%b %d")
+                            week_end = (start_date + pd.Timedelta(days=(i + 1) * 7 - 1)).strftime("%b %d")
+                            week_headers.append(f"Week {i+1} ({week_start}-{week_end})")
+
+                        week_totals.columns = ["Customer"] + week_headers
+                        visit_df = visit_df.merge(week_totals, on="Customer", how="left").fillna(0.0)
+
+                        # --- Total Sales (3 months) ---
+                        total_sales = (
+                            sales_df[sales_df[date_col_sales] >= last_3_months]
+                            .groupby(cust_col_sales)[amount_col]
+                            .sum()
+                            .reset_index()
+                            .rename(columns={cust_col_sales: "Customer", amount_col: "Total Sales"})
+                        )
+                        visit_df = visit_df.merge(total_sales, on="Customer", how="left").fillna(0.0)
+
+                        # --- Alert level ---
+                        def alert_level(row):
+                            if row["Weekly Total"] == 0:
+                                if row["Total Sales"] >= visit_df["Total Sales"].quantile(0.8):
+                                    return "🔴 High"
+                                elif row["Total Sales"] >= visit_df["Total Sales"].quantile(0.5):
+                                    return "🟠 Medium"
+                                else:
+                                    return "🟢 Low"
                             else:
-                                return "🟢 Low"
-                        else:
-                            return "✅ Visited"
+                                return "✅ Visited"
 
-                    visit_df["Alert Level"] = visit_df.apply(alert_level, axis=1)
-                    visit_df[days_str + ["Weekly Total", "Total Sales"]] = visit_df[days_str + ["Weekly Total", "Total Sales"]].round(0).astype(int)
+                        visit_df["Alert Level"] = visit_df.apply(alert_level, axis=1)
 
-                    def _highlight(v):
-                        if v in ["🔴 High"]:
-                            return "background-color: #F87171; color: white; font-weight: 700"
-                        elif v in ["🟠 Medium"]:
-                            return "background-color: #FACC15; color: black; font-weight: 700"
-                        elif v in ["🟢 Low"]:
-                            return "background-color: #4ADE80; color: black; font-weight: 700"
-                        elif v == "✅ Visited":
-                            return "background-color: #38BDF8; color: white; font-weight: 700"
-                        elif isinstance(v, int) and v == 0:
-                            return "background-color: #F87171; color: white; font-weight: 700"
-                        else:
-                            return ""
+                        # --- Format numbers ---
+                        all_numeric_cols = days_str + ["Weekly Total", "Total Sales"] + week_headers
+                        visit_df[all_numeric_cols] = visit_df[all_numeric_cols].round(0).astype(int)
 
-                    st.dataframe(
-                        visit_df.style.applymap(_highlight, subset=days_str + ["Weekly Total", "Alert Level", "Total Sales"]),
-                        use_container_width=True
-                    )
+                        # --- Highlight styling ---
+                        def _highlight(v):
+                            if v in ["🔴 High"]:
+                                return "background-color: #F87171; color: white; font-weight: 700"
+                            elif v in ["🟠 Medium"]:
+                                return "background-color: #FACC15; color: black; font-weight: 700"
+                            elif v in ["🟢 Low"]:
+                                return "background-color: #4ADE80; color: black; font-weight: 700"
+                            elif v == "✅ Visited":
+                                return "background-color: #38BDF8; color: white; font-weight: 700"
+                            elif isinstance(v, int) and v == 0:
+                                return "background-color: #F87171; color: white; font-weight: 700"
+                            else:
+                                return ""
 
-                    missed_mask = visit_df["Weekly Total"] == 0
-                    total_not_visited = int(missed_mask.sum())
-                    total_missed_cells = int((visit_df[days_str] == 0).sum().sum())
-                    st.info(f"Total missed visit cells: {total_missed_cells:,}")
-                    st.warning(f"Total customers with NO visits in last 7 days: {total_not_visited}")
+                        st.dataframe(
+                            visit_df.style.applymap(
+                                _highlight, subset=all_numeric_cols + ["Alert Level"]
+                            ),
+                            use_container_width=True,
+                        )
 
-                    try:
-                        excel_bytes = to_excel_bytes(visit_df, sheet_name="Weekly_Visit_Tracker", index=False)
-                        if st.download_button(
-                            "⬇️ Download Weekly Visit Tracker (Excel)",
-                            data=excel_bytes,
-                            file_name=f"weekly_visit_tracker_{today.strftime('%Y-%m-%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        ):
-                            st.session_state["audit_log"].append({
-                                "user": username,
-                                "action": "download",
-                                "details": "Weekly Visit Tracker Excel",
-                                "timestamp": datetime.now().isoformat()
-                            })
-                    except Exception as e:
-                        st.error(f"Could not create download file: {e}")
+                        # --- Summary info ---
+                        missed_mask = visit_df["Weekly Total"] == 0
+                        total_not_visited = int(missed_mask.sum())
+                        st.warning(f"Total customers with NO visits in last 7 days: {total_not_visited}")
 
+                        # --- Download Excel ---
+                        try:
+                            excel_bytes = to_excel_bytes(visit_df, sheet_name="Weekly_Visit_Tracker", index=False)
+                            if st.download_button(
+                                "⬇️ Download Weekly Visit Tracker (Excel)",
+                                data=excel_bytes,
+                                file_name=f"weekly_visit_tracker_{selected_date}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            ):
+                                st.session_state["audit_log"].append({
+                                    "user": username,
+                                    "action": "download",
+                                    "details": "Weekly Visit Tracker Excel",
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                        except Exception as e:
+                            st.error(f"Could not create download file: {e}")
+
+# --- Material Forecast Page ---
+elif choice == texts[lang]["material_forecast"]:
+    st.title(texts[lang]["material_forecast_title"])
+
+    if "data_loaded" not in st.session_state:
+        st.warning(texts[lang]["no_data_warning"])
+        st.stop()
+
+    # Use sales_df directly
+    df_sales = st.session_state["sales_df"].copy()
+    required_cols = ["Billing Date", "Material", "Quantity", "Material Description"]
+    missing_cols = [col for col in required_cols if col not in df_sales.columns]
+    if df_sales.empty or missing_cols:
+        st.warning(f"⚠️ Sales data missing required columns: {', '.join(missing_cols)}.")
+        st.stop()
+
+    # Apply role filter if needed
+    if user_role == "salesman" and salesman_name:
+        if "Driver Name EN" in df_sales.columns:
+            df_sales = df_sales[df_sales["Driver Name EN"] == salesman_name]
+
+    # Ensure date column is datetime
+    df_sales["Billing Date"] = pd.to_datetime(df_sales["Billing Date"], errors="coerce")
+    df_sales = df_sales.dropna(subset=["Billing Date"])
+
+    # Extract Month & Year
+    df_sales["Year"] = df_sales["Billing Date"].dt.year
+    df_sales["Month"] = df_sales["Billing Date"].dt.month
+
+    # Tabs for Monthly & Yearly Forecast
+    tab_month, tab_year = st.tabs(["Monthly Forecast", "Yearly Forecast"])
+
+    # ---------------- Monthly Forecast ----------------
+    with tab_month:
+        st.subheader("Monthly Material Forecast")
+        selected_year = st.selectbox("Select Year:", sorted(df_sales["Year"].unique()))
+        df_monthly = df_sales[df_sales["Year"] == selected_year]
+
+        # Group by Month, Material, Material Description
+        monthly_forecast = df_monthly.groupby(
+            ["Month", "Material", "Material Description"]
+        )["Quantity"].sum().reset_index()
+
+        # Fill missing months for all materials
+        all_months = pd.DataFrame({"Month": range(1, 13)})
+        all_materials = df_sales[["Material", "Material Description"]].drop_duplicates()
+        full_index = all_materials.merge(all_months, how="cross")
+        monthly_forecast = full_index.merge(
+            monthly_forecast, on=["Month", "Material", "Material Description"], how="left"
+        ).fillna(0)
+
+        # Aggregate again to ensure unique (Material Description, Month)
+        monthly_forecast = monthly_forecast.groupby(
+            ["Material Description", "Month"]
+        )["Quantity"].sum().reset_index()
+
+        # Combined line chart for all materials
+        fig = px.line(
+            monthly_forecast,
+            x="Month",
+            y="Quantity",
+            color="Material Description",
+            markers=True,
+            title=f"Monthly Forecast ({selected_year})"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Pivot table safely
+        pivot_table = monthly_forecast.pivot(
+            index="Material Description", columns="Month", values="Quantity"
+        ).fillna(0).astype(int)
+        st.dataframe(pivot_table)
+
+        # Download Excel
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        excel_bytes = to_excel_bytes(monthly_forecast, sheet_name="Monthly_Forecast")
+        if st.download_button(
+            texts[lang]["download_excel"],
+            data=excel_bytes,
+            file_name=f"monthly_forecast_{selected_year}_{timestamp}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ):
+            st.session_state["audit_log"].append({
+                "user": username,
+                "action": "download",
+                "details": f"monthly_forecast_{selected_year}_{timestamp}.xlsx",
+                "timestamp": datetime.now().isoformat()
+            })
+
+    # ---------------- Yearly Forecast ----------------
+    with tab_year:
+        st.subheader("Yearly Material Forecast")
+        yearly_forecast = df_sales.groupby(
+            ["Year", "Material", "Material Description"]
+        )["Quantity"].sum().reset_index()
+
+        # Aggregate by Year & Material Description to avoid duplicates
+        yearly_forecast = yearly_forecast.groupby(
+            ["Material Description", "Year"]
+        )["Quantity"].sum().reset_index()
+
+        # Combined grouped bar chart
+        fig = px.bar(
+            yearly_forecast,
+            x="Year",
+            y="Quantity",
+            color="Material Description",
+            barmode="group",
+            text="Quantity",
+            title="Yearly Material Forecast"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Pivot table safely
+        pivot_table_year = yearly_forecast.pivot(
+            index="Material Description", columns="Year", values="Quantity"
+        ).fillna(0).astype(int)
+        st.dataframe(pivot_table_year)
+
+        # Download Excel
+        excel_bytes_year = to_excel_bytes(yearly_forecast, sheet_name="Yearly_Forecast")
+        if st.download_button(
+            texts[lang]["download_excel"],
+            data=excel_bytes_year,
+            file_name=f"yearly_forecast_{timestamp}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ):
+            st.session_state["audit_log"].append({
+                "user": username,
+                "action": "download",
+                "details": f"yearly_forecast_{timestamp}.xlsx",
+                "timestamp": datetime.now().isoformat()
+            })
+                      
 # --- Product Availability Checker Page ---
 elif choice == "Product Availability Checker":
     st.title("🛒 Product Availability Checker")
