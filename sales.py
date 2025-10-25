@@ -3819,21 +3819,23 @@ elif choice == texts[lang]["customer_insights"]:
                 cust_candidates = ["SP Name1", "SP Name 1", "SP_Name1", "Customer", "PY Name1", "PY Name 1"]
                 date_candidates = ["Billing Date", "billing date", "Date"]
                 amount_candidates = ["Net Value", "NetAmount", "Net Amount", "Amount", "Sales Amount"]
+                material_candidates = ["Material Description", "Item", "Product", "Material"]
 
                 cust_col_ytd = find_col(ytd_df, cust_candidates)
                 cust_col_sales = find_col(sales_df, cust_candidates)
                 date_col_ytd = find_col(ytd_df, date_candidates)
                 date_col_sales = find_col(sales_df, date_candidates)
                 amount_col = find_col(sales_df, amount_candidates)
+                material_col = find_col(sales_df, material_candidates)
 
-                if None in [cust_col_ytd, cust_col_sales, date_col_ytd, date_col_sales, amount_col]:
+                if None in [cust_col_ytd, cust_col_sales, date_col_ytd, date_col_sales, amount_col, material_col]:
                     st.error("Missing required columns for Weekly Visit Tracker.")
                 else:
                     ytd_df[date_col_ytd] = pd.to_datetime(ytd_df[date_col_ytd], errors="coerce")
                     sales_df[date_col_sales] = pd.to_datetime(sales_df[date_col_sales], errors="coerce")
 
                     # --- Customer list (last 3 months) ---
-                    last_3_months = today - pd.DateOffset(months=3)
+                    last_3_months = pd.Timestamp(selected_date) - pd.DateOffset(months=3)
                     recent_ytd = ytd_df[ytd_df[date_col_ytd] >= last_3_months]
                     customer_list = pd.Series(recent_ytd[cust_col_ytd].dropna().unique()).astype(str)
 
@@ -3841,10 +3843,10 @@ elif choice == texts[lang]["customer_insights"]:
                         st.info("No customers in YTD with sales in the last 3 months.")
                     else:
                         # --- Generate last 7 days dynamically ---
-                        days_dt = [selected_date - pd.Timedelta(days=i) for i in range(6, -1, -1)]
+                        days_dt = [pd.Timestamp(selected_date) - pd.Timedelta(days=i) for i in range(6, -1, -1)]
                         days_str = [d.strftime("%Y-%m-%d") for d in days_dt]
 
-                        sales_window_start = pd.Timestamp(days_dt[0])
+                        sales_window_start = days_dt[0]
                         sales_window_end = pd.Timestamp(selected_date) + pd.Timedelta(days=1)
 
                         sales_last7 = sales_df[
@@ -3977,6 +3979,88 @@ elif choice == texts[lang]["customer_insights"]:
                                 })
                         except Exception as e:
                             st.error(f"Could not create download file: {e}")
+
+# ---------------- Improved 15-Day Product-Wise Analysis ----------------
+            st.subheader("🧾 Customer-wise Product Details (Last 15 Days)")
+
+            # Filter for last 15 days
+            product_start_date = pd.Timestamp(selected_date) - pd.Timedelta(days=15)
+            product_sales = sales_df[
+                (sales_df[date_col_sales] >= product_start_date) &
+                (sales_df[date_col_sales] <= pd.Timestamp(selected_date))
+            ].copy()
+
+            product_sales[cust_col_sales] = product_sales[cust_col_sales].astype(str)
+            product_sales[amount_col] = pd.to_numeric(product_sales[amount_col], errors="coerce").fillna(0.0)
+
+            # Unique product list (full list)
+            all_products = sorted(sales_df[material_col].unique())
+
+            # Aggregate by customer and product
+            product_summary = (
+                product_sales.groupby([cust_col_sales, material_col])[amount_col]
+                .sum().reset_index()
+                .rename(columns={
+                    cust_col_sales: "Customer",
+                    material_col: "Product",
+                    amount_col: "Sales Amount"
+                })
+            )
+
+            # --- Customer Selection ---
+            customer_list = sorted(product_summary["Customer"].unique())
+            selected_customer = st.selectbox("Select a Customer", options=customer_list)
+
+            # --- Get products sold by this customer in last 15 days ---
+            customer_products = product_summary[product_summary["Customer"] == selected_customer].copy()
+            sold_products = set(customer_products["Product"])
+
+            # --- Get products NOT sold ---
+            not_sold_products = [p for p in all_products if p not in sold_products]
+            not_sold_df = pd.DataFrame({"Product": not_sold_products})
+            not_sold_df["Status"] = "❌ Not Purchased"
+
+            # --- Display in Expanders ---
+            with st.expander(f"🟢 {selected_customer}'s Purchased Products (Last 15 Days)", expanded=True):
+                if not customer_products.empty:
+                    st.dataframe(
+                        customer_products.sort_values("Sales Amount", ascending=False),
+                        use_container_width=True
+                    )
+                else:
+                    st.info("No products purchased by this customer in the last 15 days.")
+
+            with st.expander(f"🔴 {selected_customer}'s Not Purchased Products (Last 15 Days)", expanded=False):
+                if not not_sold_df.empty:
+                    st.dataframe(not_sold_df, use_container_width=True)
+                else:
+                    st.success("✅ This customer purchased all products in the last 15 days!")
+
+            # --- Optional download buttons ---
+            col1, col2 = st.columns(2)
+            with col1:
+                try:
+                    excel_bytes_prod = to_excel_bytes(customer_products, sheet_name=f"{selected_customer}_Purchased", index=False)
+                    st.download_button(
+                        f"⬇️ Download Purchased Products ({selected_customer})",
+                        data=excel_bytes_prod,
+                        file_name=f"{selected_customer}_purchased_15days_{selected_date}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                except Exception as e:
+                    st.error(f"Download failed: {e}")
+
+            with col2:
+                try:
+                    excel_bytes_not = to_excel_bytes(not_sold_df, sheet_name=f"{selected_customer}_Not_Purchased", index=False)
+                    st.download_button(
+                        f"⬇️ Download Not Purchased Products ({selected_customer})",
+                        data=excel_bytes_not,
+                        file_name=f"{selected_customer}_not_purchased_15days_{selected_date}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                except Exception as e:
+                    st.error(f"Download failed: {e}")
 
 # --- Material Forecast Page ---
 elif choice == texts[lang]["material_forecast"]:
