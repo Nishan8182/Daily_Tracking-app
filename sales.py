@@ -3644,7 +3644,12 @@ elif choice == texts[lang]["customer_insights"]:
     rfm_agg["Segment"] = rfm_agg.apply(rfm_segment, axis=1)
 
     # --- Layout Tabs: RFM, Cohort, Weekly CRM ---
-    tab_rfm, tab_cohort, tab_weekly = st.tabs([texts[lang]["rfm_analysis_sub"], texts[lang]["rfm_cohort_sub"], "CRM & Weekly Operations"])
+    tab_rfm, tab_cohort, tab_weekly, tab_360 = st.tabs([
+    texts[lang]["rfm_analysis_sub"], 
+    texts[lang]["rfm_cohort_sub"], 
+    "CRM & Weekly Operations",
+    "Customer 360°"  # ← NEW TAB
+])
 
     # ---------------- RFM Tab ----------------
     with tab_rfm:
@@ -3920,6 +3925,186 @@ elif choice == texts[lang]["customer_insights"]:
                                       file_name=f"{sel_cust}_purchased_15days_{selected_date}.xlsx"):
                     st.success("Download ready!")
 
+# ──────────────────────── TAB 4: Customer 360° (FIXED) ────────────────────────
+    with tab_360:
+        st.markdown("### **Customer 360° – One-Click Profile**")
+        
+        # === 1. COLUMN DETECTION (Safe & Reusable) ===
+        def find_col(df, candidates):
+            for c in candidates:
+                if c in df.columns:
+                    return c
+            return None
+
+        cust_col = find_col(df_rfm, ["SP Name1", "SP Name 1", "Customer", "PY Name 1", "Customer Name"])
+        date_col = find_col(df_rfm, ["Billing Date", "Date", "Invoice Date"])
+        amount_col = find_col(df_rfm, ["Net Value", "Amount", "Sales"])
+        driver_col = find_col(df_rfm, ["Driver Name EN", "Salesman", "Driver", "Rep"])
+
+        if not all([cust_col, date_col, amount_col]):
+            st.error("Missing required columns. Check your Excel file.")
+            st.stop()
+
+        # === 2. CUSTOMER SELECTOR ===
+        all_customers = sorted(df_rfm[cust_col].dropna().unique())
+        selected_cust = st.selectbox("**Select Customer**", all_customers, key="cust360_select")
+
+        # === 3. FILTER DATA ===
+        cust_sales = df_rfm[df_rfm[cust_col] == selected_cust].copy()
+        cust_sales[date_col] = pd.to_datetime(cust_sales[date_col], errors='coerce')
+        cust_sales = cust_sales.dropna(subset=[date_col])  # Remove invalid dates
+        today = pd.Timestamp.today()
+
+        if cust_sales.empty:
+            st.warning(f"No sales data for **{selected_cust}**")
+        else:
+        
+        # ========================================
+        # KPI CARDS – CUSTOMER 360° (FINAL VERSION)
+        # ========================================
+            col1, col2, col3, col4 = st.columns(4)
+            
+            # --- 1. ENSURE amount_col is numeric ---
+            cust_sales[amount_col] = pd.to_numeric(cust_sales[amount_col], errors='coerce').fillna(0)
+
+            # --- 2. NORMALIZE Billing Type ---
+            if "Billing Type" in cust_sales.columns:
+                cust_sales["Billing Type"] = cust_sales["Billing Type"].astype(str).str.strip().str.upper()
+
+            # --- 3. TOTAL SALES & ORDERS ---
+            total_sales = cust_sales[amount_col].sum()
+            order_count = len(cust_sales)
+            last_visit = cust_sales[date_col].max()
+            days_since = (today - last_visit).days if pd.notna(last_visit) else 999
+
+            # --- 4. RETURNS ONLY (YKRE, ZRE) – CANCELLATIONS EXCLUDED ---
+            return_codes = ["YKRE", "ZRE"]  # Only Returns
+            returns_mask = cust_sales["Billing Type"].isin(return_codes)
+            returns_df = cust_sales[returns_mask]
+
+            # --- 5. RETURN VALUE = ABSOLUTE SUM (handles negative values) ---
+            returns_value = returns_df[amount_col].abs().sum()
+            return_rate = (returns_value / total_sales * 100) if total_sales > 0 else 0
+
+            # === KPI CARD 1: Total Sales ===
+            col1.metric(
+                label="**Total Sales**",
+                value=f"KD {total_sales:,.0f}",
+                delta=None
+            )
+
+            # === KPI CARD 2: Orders ===
+            col2.metric(
+                label="**Orders**",
+                value=f"{order_count:,}",
+                delta=None
+            )
+
+            # === KPI CARD 3: Last Visit ===
+            if pd.notna(last_visit):
+                col3.metric(
+                    label="**Last Visit**",
+                    value=last_visit.strftime("%b %d, %Y"),
+                    delta=f"{days_since} days ago" if days_since <= 365 else "Over 1 year",
+                    delta_color="inverse" if days_since > 30 else "normal"
+                )
+            else:
+                col3.metric(
+                    label="**Last Visit**",
+                    value="Never",
+                    delta="No data"
+                )
+
+            # === KPI CARD 4: Return Rate + Value (COMBINED) ===
+            if returns_value > 0:
+                col4.metric(
+                    label="**Return Rate**",
+                    value=f"{return_rate:.2f}%",
+                    delta=f"KD {returns_value:,.0f} returned",
+                    delta_color="inverse"  # Red = high return
+                )
+            else:
+                col4.metric(
+                    label="**Return Rate**",
+                    value="0.00%",
+                    delta="No returns",
+                    delta_color="normal"  # Green = good
+                )
+            
+            # === MINI TABS ===
+            mini_tab1, mini_tab2, mini_tab3, mini_tab4, mini_tab5 = st.tabs([
+                "Sales Trend", "RFM", "Visits", "Issues", "Actions"
+            ])
+
+            with mini_tab1:
+                daily = cust_sales.groupby(cust_sales[date_col].dt.date)[amount_col].sum().reset_index()
+                daily.columns = ["Date", "Sales"]
+                fig = px.line(daily, x="Date", y="Sales", title="Sales Trend", markers=True)
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, use_container_width=True)
+
+            with mini_tab2:
+                if selected_cust in rfm_agg.index:
+                    r = rfm_agg.loc[selected_cust]
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("**Recency**", f"{int(r['Recency'])} days")
+                    c2.metric("**Frequency**", f"{int(r['Frequency'])}")
+                    c3.metric("**Monetary**", f"KD {r['Monetary']:,.0f}")
+                    st.success(f"**Segment:** {r['Segment']}")
+                else:
+                    st.info("RFM not calculated yet")
+
+            with mini_tab3:
+                # FIXED: driver_col is now defined!
+                if driver_col and driver_col in cust_sales.columns:
+                    visits = cust_sales[[date_col, driver_col]].drop_duplicates()
+                    visits = visits.sort_values(date_col, ascending=False).head(20)
+                    visits["Date"] = visits[date_col].dt.strftime("%Y-%m-%d")
+                    visits["Salesman"] = visits[driver_col]
+                    st.dataframe(visits[["Date", "Salesman"]], use_container_width=True)
+                else:
+                    st.info("No salesman data available")
+
+            with mini_tab4:
+                issues = cust_sales[returns_mask]
+                if not issues.empty:
+                    st.error(f"**Returns: KD {returns_value:,.0f} ({return_rate:.2f}%)**")
+                    st.dataframe(
+                        issues[["Billing Date", "Billing Type", amount_col]].rename(columns={amount_col: "Return Value"}),
+                        use_container_width=True
+                    )
+                else:
+                    st.success("**No Returns – Perfect!**")
+            with mini_tab5:
+                st.markdown("#### **Smart Actions**")
+                actions = []
+                if days_since > 30: actions.append("**URGENT:** Schedule visit TODAY")
+                if return_rate > 10: actions.append("Call about quality issues")
+                if total_sales > 5000: actions.append("Offer premium products")
+                if order_count > 15: actions.append("Send loyalty reward")
+
+                for a in actions:
+                    st.markdown(f"• {a}")
+
+                note_key = f"note_{selected_cust}"
+                note = st.text_area("**Add Note**", value=st.session_state.get(note_key, ""), height=80)
+                if st.button("**Save Note**", type="primary"):
+                    st.session_state[note_key] = note
+                    st.success("Note saved!")
+
+                # Download Profile
+                profile = pd.DataFrame({
+                    "Metric": ["Customer", "Total Sales", "Orders", "Last Visit", "Days Since", "Return Rate %", "Note"],
+                    "Value": [selected_cust, total_sales, order_count, 
+                            last_visit.strftime("%Y-%m-%d") if pd.notna(last_visit) else "N/A",
+                            days_since, return_rate, note]
+                })
+                st.download_button(
+                    "**Download Profile (Excel)**",
+                    data=to_excel_bytes(profile),
+                    file_name=f"{selected_cust.replace(' ', '_')}_360.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
 # --- Material Forecast Page ---
 elif choice == texts[lang]["material_forecast"]:
