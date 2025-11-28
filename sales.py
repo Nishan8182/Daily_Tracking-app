@@ -126,10 +126,10 @@ texts = {
         "download_sales_targets": "⬇️ Download Sales & Targets Summary (Excel)",
         "sales_by_billing_sub": "📊 Sales by Billing Type per Salesman",
         "download_billing": "⬇️ Download Billing Type Table (Excel)",
-        "sales_by_py_sub": "🏬 Sales by PY Name 1",
+        "sales_by_py_sub": "🏬 Sales By Customer",
         "download_py": "⬇️ Download PY Name Table (Excel)",
-        "daily_sales_trend_sub": "📊 Daily Sales Trend with Prophet Forecast",
-        "daily_sales_title": "Daily Sales Trend, Prophet Forecast & Anomalies",
+        "daily_sales_trend_sub": "📊 Daily Sales Trend And Forecast",
+        "daily_sales_title": "Daily Sales Trend And Forecast",
         "not_enough_data": "Not enough data to perform a time-series forecast.",
         "market_vs_ecom_sub": "📊 Market vs E-com Sales",
         "market_vs_ecom_title": "Market vs E-com Sales Distribution",
@@ -137,8 +137,8 @@ texts = {
         "daily_ka_title": "Daily KA Target vs Actual Sales",
         "salesman_ka_sub": "📊 Salesman KA Target vs Actual",
         "salesman_ka_title": "KA Target vs Actual Sales by Salesman",
-        "top10_py_sub": "📊 Top 10 PY Name 1 by Sales",
-        "top10_py_title": "Top 10 PY Name 1 by Sales",
+        "top10_py_sub": "📊 Top 10 Customer by Sales",
+        "top10_py_title": "Top 10 Customer 1 by Sales",
         "download_reports_sub": "💾 Download Reports",
         "generate_pptx": "📑 Generate PPTX Report",
         "download_pptx": "⬇️ Download PPTX Report",
@@ -173,7 +173,7 @@ texts = {
         "target_config_sub": "Configuration",
         "target_alloc_tooltip": "Allocate targets by branch or customer based on historical sales.",
         "target_alloc_type": "Select Target Allocation Type",
-        "target_alloc_options": ["By Branch (SP Name1)", "Customer (PY Name 1)"],
+        "target_alloc_options": ["By Branch", "By Customer"],
         "target_input_option": "Select Target Input Option",
         "target_input_options": ["Manual", "Auto (from 'Target' sheet)"],
         "target_enter_total": "Enter the Total Target to be Allocated for this Month (KD)",
@@ -353,7 +353,7 @@ texts = {
         "target_config_sub": "التكوين",
         "target_alloc_tooltip": "تخصيص الأهداف حسب الفرع أو العميل بناءً على المبيعات التاريخية.",
         "target_alloc_type": "اختر نوع تخصيص الهدف",
-        "target_alloc_options": ["حسب الفرع (SP Name1)", "العميل (PY Name 1)"],
+        "target_alloc_options": ["حسب الفرع", "حسب العميل"],
         "target_input_option": "اختر خيار إدخال الهدف",
         "target_input_options": ["يدوي", "تلقائي (من ورقة 'Target')"],
         "target_enter_total": "أدخل إجمالي الهدف للتخصيص لهذا الشهر (د.ك)",
@@ -1255,7 +1255,7 @@ elif choice == texts[lang]["sales_tracking"]:
 
 
                         # --- Return by SP Name1 ---
-                        st.subheader("🔄 Return by SP Name1")
+                        st.subheader("🔄 Return By Branch")
                         sp_billing = df_filtered.pivot_table(
                             index="SP Name1",
                             columns="Billing Type",
@@ -1362,7 +1362,7 @@ elif choice == texts[lang]["sales_tracking"]:
 
 
                         # --- Return by SP Name1 + Material Description ---
-                        st.subheader("🔄 Return by SP Name1 + Material Description")
+                        st.subheader("🔄 Return By Branch + Material Description")
                         required_cols = {"SP Name1", "Material Description", "Billing Type", "Net Value"}
                         if required_cols.issubset(df_filtered.columns):
                             # Pivot table
@@ -1467,7 +1467,7 @@ elif choice == texts[lang]["sales_tracking"]:
 
                             fig_trend = go.Figure()
                             fig_trend.add_trace(go.Scatter(x=df_time["ds"], y=df_time["y"], mode='lines+markers', name='Actual Sales', line=dict(color='#1E3A8A', width=3)))
-                            fig_trend.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat"], mode='lines', name='Prophet Forecast', line=dict(color='#3B82F6', width=2, dash='dash')))
+                            fig_trend.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat"], mode='lines', name=' Forecast', line=dict(color='#3B82F6', width=2, dash='dash')))
                         except Exception:
                             fig_trend = go.Figure()
                             fig_trend.add_trace(go.Scatter(x=df_time["ds"], y=df_time["y"], mode='lines+markers', name='Actual Sales'))
@@ -1606,7 +1606,7 @@ elif choice == texts[lang]["sales_tracking"]:
                                 "Market vs E-com Sales": fig_channel,
                                 "Daily KA Target vs Actual": fig_target_trend,
                                 "Salesman KA Target vs Actual": fig_salesman_target,
-                                "Top 10 PY Name 1 by Sales": fig_top10
+                                "Top 10 Customer 1 by Sales": fig_top10
                             }
                             pptx_stream = create_pptx(report_df_with_total, billing_df, py_table_with_total, figs_dict, kpi_data)
                             st.download_button(
@@ -2024,7 +2024,7 @@ elif choice == texts[lang]["sales_tracking"]:
                         st.dataframe(styled_py_return, use_container_width=True, hide_index=False)
 
                         # --- Return by SP Name1 ---
-                        st.subheader("🔄 Return by SP Name1")
+                        st.subheader("🔄 Return By Branch")
                         sp_billing = df_filtered.pivot_table(
                             index="SP Name1",
                             columns="Billing Type",
@@ -2083,7 +2083,7 @@ elif choice == texts[lang]["sales_tracking"]:
                         
                         fig_trend = go.Figure()
                         fig_trend.add_trace(go.Scatter(x=df_time["ds"], y=df_time["y"], mode='lines+markers', name='Actual Sales', line=dict(color='#1E3A8A', width=3)))
-                        fig_trend.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat"], mode='lines', name='Prophet Forecast', line=dict(color='#3B82F6', width=2, dash='dash')))
+                        fig_trend.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat"], mode='lines', name=' Forecast', line=dict(color='#3B82F6', width=2, dash='dash')))
                         
                         df_time['y_mean'] = df_time['y'].rolling(window=7).mean()
                         df_time['y_std'] = df_time['y'].rolling(window=7).std()
@@ -2219,7 +2219,7 @@ elif choice == texts[lang]["sales_tracking"]:
                                 "Market vs E-com Sales": fig_channel,
                                 "Daily KA Target vs Actual": fig_target_trend,
                                 "Salesman KA Target vs Actual": fig_salesman_target,
-                                "Top 10 PY Name 1 by Sales": fig_top10
+                                "Top 10 Customer by Sales": fig_top10
                             }
                             pptx_stream = create_pptx(report_df_with_total, billing_df, py_table_with_total, figs_dict, kpi_data)
                             st.download_button(
@@ -2244,9 +2244,19 @@ elif choice == "Year to Date Comparison":
         st.title("📅 Year to Date Comparison")
         st.markdown('<div class="tooltip">ℹ️<span class="tooltiptext">Compare sales across two periods by a selected dimension.</span></div>', unsafe_allow_html=True)
 
-        # --- Select Dimension ---
+              # --- Select Dimension ---
         st.subheader("📊 Choose Dimension")
-        dimension = st.selectbox("Choose dimension", ["PY Name 1", "Driver Name EN", "SP Name1"], index=0)
+
+        # Map friendly labels to actual column names
+        dim_options = {
+            "By Customer": "PY Name 1",       # Customer Name column
+            "By Salesman": "Driver Name EN",  # Salesman Name
+            "By Branch": "SP Name1",          # Branch Name column
+        }
+
+        # User sees friendly names; program uses real column names
+        dim_label = st.selectbox("Choose dimension", list(dim_options.keys()), index=0)
+        dimension = dim_options[dim_label]
 
         # --- Select Two Periods ---
         st.subheader("📆 Select Two Periods")
@@ -2277,7 +2287,9 @@ elif choice == "Year to Date Comparison":
             ytd_comparison.loc['Total'] = ytd_comparison.sum(numeric_only=True)
             ytd_comparison.loc['Total', 'Name'] = 'Total'
 
-            st.subheader(f"📋 Comparison by {dimension}")
+            # Use friendly label in the heading
+            st.subheader(f"📋 Comparison by {dim_label}")
+
             styled_ytd = (
                 ytd_comparison.style
                 .set_table_styles([
@@ -2295,47 +2307,104 @@ elif choice == "Year to Date Comparison":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-            # --- Top 10 Customers: Last Year vs Current Year ---
+                     # --- Top 10 Customers: Last Year vs Current Year ---
             st.subheader("🏆 Top 10 Customers – Last Year vs Current Year")
+
+            # Make sure Billing Date is datetime
+            if not np.issubdtype(ytd_df["Billing Date"].dtype, np.datetime64):
+                ytd_df["Billing Date"] = pd.to_datetime(ytd_df["Billing Date"], errors="coerce")
+
             ytd_df["Year"] = ytd_df["Billing Date"].dt.year
             current_year = pd.Timestamp.today().year
             last_year = current_year - 1
+
+            # Aggregate sales by Customer + Year
             cust_sales = (
                 ytd_df[ytd_df["Year"].isin([last_year, current_year])]
                 .groupby(["PY Name 1", "Year"])["Net Value"]
                 .sum()
                 .reset_index()
             )
+
             if cust_sales.empty:
                 st.info("⚠️ No customer sales found for last year or current year.")
             else:
-                cust_pivot = cust_sales.pivot(index="PY Name 1", columns="Year", values="Net Value").fillna(0)
-                cust_pivot["Total"] = cust_pivot.sum(axis=1)
-                top10_cust = cust_pivot.sort_values("Total", ascending=False).head(10).reset_index()
-                top10_melt = top10_cust.melt(id_vars="PY Name 1", value_vars=[last_year, current_year], var_name="Year", value_name="Sales")
-                top10_melt = top10_melt.merge(top10_cust[["PY Name 1", last_year, current_year]], on="PY Name 1", how="left")
-                top10_melt["Status"] = np.where(top10_melt["Year"] == current_year,
-                                                np.where(top10_melt[current_year] >= top10_melt[last_year], "Achieved", "Not Achieved"),
-                                                "Previous")
-                color_map = {"Achieved": "green", "Not Achieved": "red", "Previous": "gray"}
-                fig_top10 = px.bar(
-                    top10_melt,
-                    x="PY Name 1",
-                    y="Sales",
-                    color="Status",
-                    color_discrete_map=color_map,
-                    barmode="group",
-                    text=top10_melt["Sales"].apply(lambda x: f"{x:,.0f}")
-                )
-                fig_top10.update_traces(textposition="inside", insidetextanchor="middle", textfont=dict(color="white", size=12))
-                fig_top10.update_layout(title=f"Top 10 Customers: {last_year} vs {current_year}",
-                                        xaxis_title="Customer", yaxis_title="Sales (KD)",
-                                        font=dict(family="Roboto", size=12),
-                                        plot_bgcolor="#F3F4F6", paper_bgcolor="#F3F4F6")
-                st.plotly_chart(fig_top10, use_container_width=True)
+                cust_pivot = cust_sales.pivot(
+                    index="PY Name 1",
+                    columns="Year",
+                    values="Net Value"
+                ).fillna(0)
+
+                # Use only year columns that actually exist (avoid KeyError)
+                year_cols = [y for y in [last_year, current_year] if y in cust_pivot.columns]
+
+                if not year_cols:
+                    st.info("⚠️ No valid year columns found to build Top 10 customers chart.")
+                else:
+                    cust_pivot["Total"] = cust_pivot[year_cols].sum(axis=1)
+                    top10_cust = cust_pivot.sort_values("Total", ascending=False).head(10).reset_index()
+
+                    # Melt for plotting
+                    top10_melt = top10_cust.melt(
+                        id_vars="PY Name 1",
+                        value_vars=year_cols,
+                        var_name="Year",
+                        value_name="Sales",
+                    )
+
+                    # Merge back the wide data for status calculation
+                    merge_cols = ["PY Name 1"] + year_cols
+                    top10_melt = top10_melt.merge(
+                        top10_cust[merge_cols],
+                        on="PY Name 1",
+                        how="left",
+                    )
+
+                    def classify_status(row):
+                        # Both last_year & current_year exist → Achieved vs Not Achieved
+                        if (last_year in year_cols) and (current_year in year_cols) and row["Year"] == current_year:
+                            return "Achieved" if row.get(current_year, 0) >= row.get(last_year, 0) else "Not Achieved"
+                        # Only current year data exists
+                        if row["Year"] == current_year:
+                            return "Current"
+                        # Only previous year / others
+                        return "Previous"
+
+                    top10_melt["Status"] = top10_melt.apply(classify_status, axis=1)
+
+                    color_map = {
+                        "Achieved": "green",
+                        "Not Achieved": "red",
+                        "Previous": "gray",
+                        "Current": "blue",
+                    }
+
+                    fig_top10 = px.bar(
+                        top10_melt,
+                        x="PY Name 1",
+                        y="Sales",
+                        color="Status",
+                        color_discrete_map=color_map,
+                        barmode="group",
+                        text=top10_melt["Sales"].apply(lambda x: f"{x:,.0f}"),
+                    )
+                    fig_top10.update_traces(
+                        textposition="inside",
+                        insidetextanchor="middle",
+                        textfont=dict(color="white", size=12),
+                    )
+                    fig_top10.update_layout(
+                        title=f"Top 10 Customers: {last_year} vs {current_year}",
+                        xaxis_title="Customer",
+                        yaxis_title="Sales (KD)",
+                        font=dict(family="Roboto", size=12),
+                        plot_bgcolor="#F3F4F6",
+                        paper_bgcolor="#F3F4F6",
+                    )
+                    st.plotly_chart(fig_top10, use_container_width=True)
 
             # --- Return by SP Name1 + Material Description (YTD) ---
-            st.subheader("🔄 Return by SP Name1 + Material Description (YTD)")
+            st.subheader("🔄 Return By Branch + Material Description (YTD)")
             required_cols = {"SP Name1", "Material Description", "Billing Type", "Net Value"}
             if required_cols.issubset(ytd_df.columns):
                 sp_mat_ytd = pd.pivot_table(
@@ -2545,7 +2614,7 @@ elif choice == texts[lang]["custom_analysis"]:
 
 # --- SP/PY Target Allocation Page ---
 elif choice == "SP/PY Target Allocation":
-    st.title("🎯 SP/PY Target Allocation")
+    st.title("🎯 By Customer & By Branch Target Allocation")
     if "data_loaded" not in st.session_state:
         st.warning("⚠️ Please upload the Excel file from the sidebar first.")
         st.stop()
@@ -2556,8 +2625,14 @@ elif choice == "SP/PY Target Allocation":
 
     st.subheader("Configuration")
     st.markdown('<div class="tooltip">ℹ️<span class="tooltiptext">Allocate targets by branch or customer based on historical sales.</span></div>', unsafe_allow_html=True)
-    allocation_type = st.radio("Select Target Allocation Type", ["By Branch (SP Name1)", "Customer (PY Name 1)"])
-    group_col = "SP Name1" if allocation_type == "By Branch (SP Name1)" else "PY Name 1"
+        # Target allocation grouping choice
+    allocation_type = st.radio(
+        "Select Target Allocation Type",
+        ["By Branch", "By Customer"]
+    )
+
+    # Map choice to actual column
+    group_col = "SP Name1" if allocation_type == "By Branch" else "PY Name 1"
 
     target_option = st.radio("Select Target Input Option", ["Manual", "Auto (from 'Target' sheet)"])
 
@@ -2961,12 +3036,30 @@ elif choice == "AI Insights":
 
         anomalies_ai = detect_anomalies(df_time_ai)
 
-        # NEW: RFM Integration for Customer Insights
+               # NEW: RFM Integration for Customer Insights
         today = pd.Timestamp.today().normalize()
-        rfm_ai = df_ai.groupby("SP Name1").agg({
+
+        # ✅ Use customer name for RFM (PY Name 1 = Customer)
+        cust_col = "PY Name 1"
+        if cust_col not in df_ai.columns:
+            # Fallbacks in case column naming is different
+            if "PY Name1" in df_ai.columns:
+                cust_col = "PY Name1"
+            elif "Customer" in df_ai.columns:
+                cust_col = "Customer"
+            elif "SP Name1" in df_ai.columns:
+                # Last fallback: treat branch as customer if needed
+                cust_col = "SP Name1"
+            else:
+                # Very last fallback: just use first column (to avoid crash)
+                cust_col = df_ai.columns[0]
+
+        rfm_ai = df_ai.groupby(cust_col).agg({
             "Billing Date": lambda x: (today - x.max()).days,
             "Net Value": ["count", "sum"]
         }).reset_index()
+
+        # Standard RFM columns
         rfm_ai.columns = ["Customer", "Recency", "Frequency", "Monetary"]
         rfm_ai = rfm_ai[rfm_ai["Monetary"] > 0]
 
@@ -3037,11 +3130,41 @@ elif choice == "AI Insights":
         total_sales_all = total_sales_by_sm.sum()
         ka_ach_pct = (total_sales_all / total_ka_target_all_ai * 100) if total_ka_target_all_ai > 0 else 0
         tal_ach_pct = (talabat_ai.sum() / total_tal_target_all_ai * 100) if total_tal_target_all_ai > 0 else 0
+
+        # ✅ High-level KPI cards
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        kpi1.metric("Total Sales", fmt_kd(total_sales_all))
+
+        if total_ka_target_all_ai > 0:
+            kpi2.metric("KA Achievement", f"{ka_ach_pct:.0f}%")
+        else:
+            kpi2.metric("KA Achievement", "N/A")
+
+        if total_tal_target_all_ai > 0:
+            kpi3.metric("Talabat Achievement", f"{tal_ach_pct:.0f}%")
+        else:
+            kpi3.metric("Talabat Achievement", "N/A")
+
+        # Champions share from RFM (if available)
+        if not segment_sales.empty and segment_sales.sum() > 0:
+            champions_val = segment_sales.get("Champions", 0)
+            champions_share = (champions_val / segment_sales.sum()) * 100
+            kpi4.metric("Champions Share", f"{champions_share:.0f}%")
+        else:
+            kpi4.metric("Champions Share", "N/A")
+
+        # 🔹 Keep the existing detailed bullet summary
         summary_lines.append(f"- Overall sales in selected period: {fmt_kd(total_sales_all)}.")
         if total_ka_target_all_ai > 0:
-            summary_lines.append(f"- KA target achievement: {ka_ach_pct:.0f}% with a remaining gap of {fmt_kd(max(total_ka_target_all_ai - total_sales_all, 0))}.")
+            summary_lines.append(
+                f"- KA target achievement: {ka_ach_pct:.0f}% with a remaining gap of "
+                f"{fmt_kd(max(total_ka_target_all_ai - total_sales_all, 0))}."
+            )
         if total_tal_target_all_ai > 0:
-            summary_lines.append(f"- Talabat target achievement: {tal_ach_pct:.0f}% with a remaining gap of {fmt_kd(max(total_tal_target_all_ai - talabat_ai.sum(), 0))}. ")
+            summary_lines.append(
+                f"- Talabat target achievement: {tal_ach_pct:.0f}% with a remaining gap of "
+                f"{fmt_kd(max(total_tal_target_all_ai - talabat_ai.sum(), 0))}. "
+            )
 
         # Channels
         if total_channel_ai > 0:
@@ -3050,7 +3173,7 @@ elif choice == "AI Insights":
         # Productivity and forecast
         if working_days_current_month_ai > 0 and days_finish_ai > 0:
             summary_lines.append(f"- Current sales/day: {fmt_kd(current_sales_per_day_ai)} vs daily KA target {fmt_kd(per_day_ka_target_ai)}.")
-            summary_lines.append(f"- Prophet forecast month-end KA sales: {fmt_kd(forecast_month_end_ka_ai)} based on current run-rate.")
+            summary_lines.append(f"- forecast month-end KA sales: {fmt_kd(forecast_month_end_ka_ai)} based on current run-rate.")
             if exp_forecast is not None:
                 exp_month_end = exp_forecast.sum()  # Sum of next 30 days forecast
                 summary_lines.append(f"- Advanced (Holt-Winters) 30-day forecast: {fmt_kd(exp_month_end)}.")
@@ -3125,13 +3248,9 @@ elif choice == "AI Insights":
                 top_ch_sales = max(c['channel_sales'], key=c['channel_sales'].get)
                 summary_lines.append(f"- Highest sales channel: {top_ch_sales} with {fmt_kd(c['channel_sales'][top_ch_sales])}.")
 
-        # NEW: RFM Summary
-        if not segment_sales.empty:
-            top_segment = segment_sales.index[0]
-            top_seg_val = segment_sales.iloc[0]
-            summary_lines.append(f"- Top customer segment (RFM): {top_segment} with {fmt_kd(top_seg_val)} ({(top_seg_val/segment_sales.sum()*100):.0f}% of total).")
-
+                # (RFM summary removed from AI Insights as per your request)
         st.write("\n".join(summary_lines))
+
 
         # New: Prescriptive recommendations
         st.subheader("🛠️ Prescriptive Recommendations")
@@ -3363,186 +3482,183 @@ elif choice == "AI Insights":
             else:
                 st.write("- YTD data not available for pulse.")
 
-        with st.expander("SP/PY Target Allocation insights"):
-            if alloc_pulse:
-                a = alloc_pulse
-                st.write(f"- Avg monthly ({a['hist_period']}): {fmt_kd(a['avg_hist'])}.")
-                st.write(f"- Allocated KA target: {fmt_kd(a['allocated_target'])}; lift needed: {(a['inc_needed_pct'] if pd.notnull(a['inc_needed_pct']) else 0):.0f}%.")
-                st.write(f"- Latest month ({a['latest_month_label']}) progress: {fmt_kd(a['current_month_total'])}.")
+    with st.expander("SP/PY Target Allocation insights"):
+        if alloc_pulse:
+            a = alloc_pulse
+            st.write(f"- Avg monthly ({a['hist_period']}): {fmt_kd(a['avg_hist'])}.")
+            st.write(
+                f"- Allocated KA target: {fmt_kd(a['allocated_target'])}, "
+                f"Increase needed: {(a['inc_needed_pct'] if pd.notnull(a['inc_needed_pct']) else 0):.0f}%."
+            )
+            st.write(
+                f"- Latest month ({a['latest_month_label']}) progress: "
+                f"{fmt_kd(a['current_month_total'])}."
+            )
 
-                # ✅ FIXED: Prevents ValueError when correlation is string or NaN
-                if pd.notnull(a.get("target_sales_corr")) and isinstance(a["target_sales_corr"], (int, float)):
-                    st.write(f"- Historical sales vs targets correlation: {a['target_sales_corr']:.2f}.")
-                else:
-                    st.write("- Historical sales vs targets correlation: N/A.")
-
-                if not a['suggested_targets'].empty:
-                    st.subheader("Suggested Target Adjustments")
-                    st.dataframe(a['suggested_targets'].to_frame(name="Suggested KA Target"))
+            # safe correlation check
+            if pd.notnull(a.get("target_sales_corr")) and isinstance(a["target_sales_corr"], (int, float)):
+                st.write(f"- Historical sales vs targets correlation: {a['target_sales_corr']:.2f}.")
             else:
-                st.write("- Allocation pulse not available.")
+                st.write("- Historical sales vs targets correlation: N/A.")
+        else:
+            st.write("- Allocation pulse not available.")
 
-        with st.expander("Target Sheet insights"):
-            if target_pulse:
-                t = target_pulse
-                st.write(f"- Total KA Target: {fmt_kd(t['total_ka'])}, Total Talabat Target: {fmt_kd(t['total_tal'])}.")
-                st.write(f"- Average KA Target: {fmt_kd(t['avg_ka'])}, Variance: {fmt_kd(t['target_variance'])}.")
-                st.write(f"- Top target salesman: {t['top_target_sm']}.")
-                if not t['target_quartiles'].empty:
-                    st.write(f"- Quartiles: Q1 {fmt_kd(t['target_quartiles'][0.25])}, Median {fmt_kd(t['target_quartiles'][0.5])}, Q3 {fmt_kd(t['target_quartiles'][0.75])}.")
-            else:
-                st.write("- Target data not available.")
+    with st.expander("Target Sheet insights"):
+        if target_pulse:
+            t = target_pulse
+            st.write(f"- Total KA Target: {fmt_kd(t['total_ka'])}, Total Talabat Target: {fmt_kd(t['total_tal'])}.")
+            st.write(f"- Average KA Target: {fmt_kd(t['avg_ka'])}, Variance: {fmt_kd(t['target_variance'])}.")
+            st.write(f"- Top target salesman: {t['top_target_sm']}.")
+            if not t['target_quartiles'].empty:
+                st.write(
+                    f"- Quartiles: Q1 {fmt_kd(t['target_quartiles'][0.25])}, "
+                    f"Median {fmt_kd(t['target_quartiles'][0.5])}, "
+                    f"Q3 {fmt_kd(t['target_quartiles'][0.75])}."
+                )
+        else:
+            st.write("- Target data not available.")
 
-        with st.expander("Sales Channels Sheet insights"):
-            if channels_pulse:
-                c = channels_pulse
-                dist_str = ", ".join([f"{k}: {v}" for k, v in c['channel_dist'].items()])
-                st.write(f"- Channel distribution: {dist_str}.")
-                st.write(f"- Dominant channel: {c['top_channel']}.")
-                st.write(f"- Unique PY Names: {c['num_py']}.")
-                if c['channel_sales']:
-                    st.subheader("Channel Sales")
-                    st.dataframe(pd.Series(c['channel_sales']).to_frame(name="Net Value"))
-            else:
-                st.write("- Channels data not available.")
+    with st.expander("Sales Channels Sheet insights"):
+        if channels_pulse:
+            c = channels_pulse
+            dist_str = ", ".join([f"{k}: {v}" for k, v in c['channel_dist'].items()])
+            st.write(f"- Channel distribution: {dist_str}.")
+            st.write(f"- Dominant channel: {c['top_channel']}.")
+            st.write(f"- Unique PY Names: {c['num_py']}.")
+            if c['channel_sales']:
+                st.subheader("Channel Sales")
+                st.dataframe(pd.Series(c['channel_sales']).to_frame(name="Net Value"))
+        else:
+            st.write("- Channels data not available.")
+            # --- Downloadable narrative ---
+            st.markdown("---")
+            st.subheader("📥 Download executive summary")
+            exec_summary_text = f"""Executive Summary ({ai_start.date()} to {ai_end.date()})
 
-        # NEW: Customer Insights Expander
-        with st.expander("Customer Insights (RFM)"):
-            if not segment_sales.empty:
-                st.write(f"- Top segment: {segment_sales.index[0]} with {fmt_kd(segment_sales.iloc[0])} ({(segment_sales.iloc[0]/segment_sales.sum()*100):.0f}% of total).")
-                st.dataframe(segment_sales.to_frame(name="Monetary Value"))
-            else:
-                st.write("- No RFM data available.")
+    {chr(10).join(summary_lines)}
 
-        # --- Downloadable narrative ---
-        st.markdown("---")
-        st.subheader("📥 Download executive summary")
-        exec_summary_text = f"""Executive Summary ({ai_start.date()} to {ai_end.date()})
+    Prescriptive Recommendations:
+    {chr(10).join(rec_lines)}
 
-{chr(10).join(summary_lines)}
+    Sales Tracking Insights:
+    - {top_py_line}
+    - Returns: {fmt_kd(ret)} ({ret_pct:.0f}%)
+    - Cancellations: {fmt_kd(canc)} ({canc_pct:.0f}%)
+    - Daily anomalies: {len(anomalies_ai) if len(df_ai)>0 and len(df_time_ai)>7 else 0}
 
-Prescriptive Recommendations:
-{chr(10).join(rec_lines)}
+    YTD Comparison:
+    {f"- {fmt_kd(ytd_pulse['total_p2'])} vs {fmt_kd(ytd_pulse['total_p1'])} (Δ {fmt_kd(ytd_pulse['diff'])}, {(ytd_pulse['pct'] if ytd_pulse and pd.notnull(ytd_pulse['pct']) else 0):.0f}%)" if ytd_pulse else "- Not available"}
+    {f"- YoY ({ytd_pulse['current_year_label']} vs {ytd_pulse['prev_year_label']}): {fmt_kd(ytd_pulse['ytd_current'])} vs {fmt_kd(ytd_pulse['ytd_prev'])} (Δ {fmt_kd(ytd_pulse['yoy_diff'])}, {(ytd_pulse['yoy_pct'] if ytd_pulse and pd.notnull(ytd_pulse['yoy_pct']) else 0):.0f}%)" if ytd_pulse else ""}
+    {f"- {benchmark_insight}" if benchmark_insight else ""}
+    {f"- MoM ({ytd_pulse['latest_month_label']} vs {ytd_pulse['prev_month_label']}): {fmt_kd(ytd_pulse['mom_current'])} vs {fmt_kd(ytd_pulse['mom_prev'])} (Δ {fmt_kd(ytd_pulse['mom_diff'])}, {(ytd_pulse['mom_pct'] if ytd_pulse and pd.notnull(ytd_pulse['mom_pct']) else 0):.0f}%)" if ytd_pulse else ""}
 
-Sales Tracking Insights:
-- {top_py_line}
-- Returns: {fmt_kd(ret)} ({ret_pct:.0f}%)
-- Cancellations: {fmt_kd(canc)} ({canc_pct:.0f}%)
-- Daily anomalies: {len(anomalies_ai) if len(df_ai)>0 and len(df_time_ai)>7 else 0}
+    SP/PY Allocation:
+    {f"- Avg monthly {fmt_kd(alloc_pulse['avg_hist'])}, target {fmt_kd(alloc_pulse['allocated_target'])}, lift {alloc_pulse['inc_needed_pct']:.0f}%, month-to-date {fmt_kd(alloc_pulse['current_month_total'])}" if alloc_pulse else "- Not available"}
+    {f"- Sales-Target Corr: {alloc_pulse['target_sales_corr']:.2f}" if alloc_pulse and pd.notnull(alloc_pulse['target_sales_corr']) else ""}
 
-YTD Comparison:
-{f"- {fmt_kd(ytd_pulse['total_p2'])} vs {fmt_kd(ytd_pulse['total_p1'])} (Δ {fmt_kd(ytd_pulse['diff'])}, {(ytd_pulse['pct'] if ytd_pulse and pd.notnull(ytd_pulse['pct']) else 0):.0f}%)" if ytd_pulse else "- Not available"}
-{f"- YoY ({ytd_pulse['current_year_label']} vs {ytd_pulse['prev_year_label']}): {fmt_kd(ytd_pulse['ytd_current'])} vs {fmt_kd(ytd_pulse['ytd_prev'])} (Δ {fmt_kd(ytd_pulse['yoy_diff'])}, {(ytd_pulse['yoy_pct'] if ytd_pulse and pd.notnull(ytd_pulse['yoy_pct']) else 0):.0f}%)" if ytd_pulse else ""}
-{f"- {benchmark_insight}" if benchmark_insight else ""}
-{f"- MoM ({ytd_pulse['latest_month_label']} vs {ytd_pulse['prev_month_label']}): {fmt_kd(ytd_pulse['mom_current'])} vs {fmt_kd(ytd_pulse['mom_prev'])} (Δ {fmt_kd(ytd_pulse['mom_diff'])}, {(ytd_pulse['mom_pct'] if ytd_pulse and pd.notnull(ytd_pulse['mom_pct']) else 0):.0f}%)" if ytd_pulse else ""}
+    Target Sheet:
+    {f"- Total KA {fmt_kd(target_pulse['total_ka'])}, Talabat {fmt_kd(target_pulse['total_tal'])}, Avg KA {fmt_kd(target_pulse['avg_ka'])}" if target_pulse else "- Not available"}
 
-SP/PY Allocation:
-{f"- Avg monthly {fmt_kd(alloc_pulse['avg_hist'])}, target {fmt_kd(alloc_pulse['allocated_target'])}, lift {alloc_pulse['inc_needed_pct']:.0f}%, month-to-date {fmt_kd(alloc_pulse['current_month_total'])}" if alloc_pulse else "- Not available"}
-{f"- Sales-Target Corr: {alloc_pulse['target_sales_corr']:.2f}" if alloc_pulse and pd.notnull(alloc_pulse['target_sales_corr']) else ""}
+    Channels Sheet:
+    {f"- Dist: {', '.join([f'{k}: {v}' for k,v in channels_pulse['channel_dist'].items()])}, Top: {channels_pulse['top_channel']}" if channels_pulse else "- Not available"}
 
-Target Sheet:
-{f"- Total KA {fmt_kd(target_pulse['total_ka'])}, Talabat {fmt_kd(target_pulse['total_tal'])}, Avg KA {fmt_kd(target_pulse['avg_ka'])}" if target_pulse else "- Not available"}
+    Customer RFM:
+    {f"- Top segment: {segment_sales.index[0]} with {fmt_kd(segment_sales.iloc[0])}" if not segment_sales.empty else "- Not available"}
+    """
+            if st.download_button(
+                "💾 Download AI executive summary (TXT)",
+                data=exec_summary_text.encode("utf-8"),
+                file_name=f"AI_Executive_Summary_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt",
+                mime="text/plain"
+            ):
+                st.session_state["audit_log"].append({
+                    "user": username,
+                    "action": "download",
+                    "details": "AI Executive Summary TXT",
+                    "timestamp": datetime.now()
+                })
 
-Channels Sheet:
-{f"- Dist: {', '.join([f'{k}: {v}' for k,v in channels_pulse['channel_dist'].items()])}, Top: {channels_pulse['top_channel']}" if channels_pulse else "- Not available"}
+            # --- Optional: ask a question about the data (enhanced heuristic) ---
+            st.markdown("---")
+            st.subheader("💬 Ask a question about your data")
+            user_q = st.text_input("Type a question (e.g., 'Which salesman is growing fastest?', 'Where are returns highest?', 'Correlation between targets and sales?')")
+            if user_q:
+                # Enhanced heuristic answers based on keywords
+                answer_lines = []
+                q = user_q.lower()
 
-Customer RFM:
-{f"- Top segment: {segment_sales.index[0]} with {fmt_kd(segment_sales.iloc[0])}" if not segment_sales.empty else "- Not available"}
-"""
-        if st.download_button(
-            "💾 Download AI executive summary (TXT)",
-            data=exec_summary_text.encode("utf-8"),
-            file_name=f"AI_Executive_Summary_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt",
-            mime="text/plain"
-        ):
-            st.session_state["audit_log"].append({
-                "user": username,
-                "action": "download",
-                "details": "AI Executive Summary TXT",
-                "timestamp": datetime.now()
-            })
-
-        # --- Optional: ask a question about the data (enhanced heuristic) ---
-        st.markdown("---")
-        st.subheader("💬 Ask a question about your data")
-        user_q = st.text_input("Type a question (e.g., 'Which salesman is growing fastest?', 'Where are returns highest?', 'Correlation between targets and sales?')")
-        if user_q:
-            # Enhanced heuristic answers based on keywords
-            answer_lines = []
-            q = user_q.lower()
-
-            if "top" in q and ("salesman" in q or "driver" in q):
-                top_series = total_sales_by_sm.sort_values(ascending=False).head(5)
-                for name, val in top_series.items():
-                    answer_lines.append(f"- {name}: {fmt_kd(val)}")
-                if not answer_lines:
-                    answer_lines.append("- No salesman data available.")
-            elif "return" in q:
-                # Returns by salesman
-                ret_by_sm = (df_ai.pivot_table(index="Driver Name EN", columns="Billing Type", values="Net Value", aggfunc="sum", fill_value=0)[["YKRE","ZRE"]].sum(axis=1)
-                             if set(["YKRE","ZRE"]).issubset(df_ai["Billing Type"].unique()) else pd.Series(dtype=float))
-                if not ret_by_sm.empty:
-                    top_ret = ret_by_sm.sort_values(ascending=False).head(5)
-                    for name, val in top_ret.items():
-                        answer_lines.append(f"- {name}: returns {fmt_kd(val)}")
+                if "top" in q and ("salesman" in q or "driver" in q):
+                    top_series = total_sales_by_sm.sort_values(ascending=False).head(5)
+                    for name, val in top_series.items():
+                        answer_lines.append(f"- {name}: {fmt_kd(val)}")
+                    if not answer_lines:
+                        answer_lines.append("- No salesman data available.")
+                elif "return" in q:
+                    # Returns by salesman
+                    ret_by_sm = (df_ai.pivot_table(index="Driver Name EN", columns="Billing Type", values="Net Value", aggfunc="sum", fill_value=0)[["YKRE","ZRE"]].sum(axis=1)
+                                if set(["YKRE","ZRE"]).issubset(df_ai["Billing Type"].unique()) else pd.Series(dtype=float))
+                    if not ret_by_sm.empty:
+                        top_ret = ret_by_sm.sort_values(ascending=False).head(5)
+                        for name, val in top_ret.items():
+                            answer_lines.append(f"- {name}: returns {fmt_kd(val)}")
+                    else:
+                        answer_lines.append("- No return data available in the selected period.")
+                elif "e-com" in q or "talabat" in q or "channel" in q:
+                    answer_lines.append(f"- Retail: {fmt_kd(total_retail_ai)} ({retail_pct_ai:.0f}%)")
+                    answer_lines.append(f"- E-com: {fmt_kd(total_ecom_ai)} ({ecom_pct_ai:.0f}%)")
+                elif "forecast" in q or "run rate" in q:
+                    answer_lines.append(f"- Current sales/day: {fmt_kd(current_sales_per_day_ai)}")
+                    answer_lines.append(f"- forecast month-end KA sales: {fmt_kd(forecast_month_end_ka_ai)}")
+                    if exp_forecast is not None:
+                        answer_lines.append(f"- Holt-Winters 30-day forecast total: {fmt_kd(exp_forecast.sum())}")
+                    if lin_forecast is not None:
+                        answer_lines.append(f"- Linear trend 30-day forecast total: {fmt_kd(lin_forecast.sum())}")
+                elif "correlation" in q or "corr" in q:
+                    if alloc_pulse and pd.notnull(alloc_pulse["target_sales_corr"]):
+                        answer_lines.append(f"- Correlation between historical sales and targets: {alloc_pulse['target_sales_corr']:.2f}")
+                    else:
+                        answer_lines.append("- Correlation data not available.")
+                    # Add sales vs returns corr example
+                    if not df_ai.empty:
+                        df_corr = df_ai[["Net Value"]].copy()
+                        df_corr["is_return"] = df_ai["Billing Type"].isin(["YKRE", "ZRE"]).astype(int)
+                        corr_sales_ret = df_corr.corr().iloc[0,1]
+                        answer_lines.append(f"- Example: Sales vs Returns indicator: {corr_sales_ret:.2f}")
+                elif "growth" in q or "fastest" in q:
+                    if not ytd_df.empty:
+                        # Compute growth rates by salesman (last 30d vs prior)
+                        p = ytd_quick_compare(ytd_df)
+                        if p:
+                            df_p1_sm = ytd_df[(ytd_df["Billing Date"] >= pd.to_datetime(p["p1_start"])) & (ytd_df["Billing Date"] < pd.to_datetime(p["p1_end"]))].groupby("Driver Name EN")["Net Value"].sum()
+                            df_p2_sm = ytd_df[(ytd_df["Billing Date"] >= pd.to_datetime(p["p2_start"])) & (ytd_df["Billing Date"] <= pd.to_datetime(p["p2_end"]))].groupby("Driver Name EN")["Net Value"].sum()
+                            growth = ((df_p2_sm - df_p1_sm) / df_p1_sm * 100).dropna().sort_values(ascending=False).head(5)
+                            for name, val in growth.items():
+                                answer_lines.append(f"- {name}: {val:.0f}% growth")
+                    else:
+                        answer_lines.append("- Growth data requires YTD sheet.")
+                elif "anomaly" in q or "outlier" in q:
+                    if not anomalies_ai.empty:
+                        for idx, row in anomalies_ai.iterrows():
+                            answer_lines.append(f"- {row['ds'].date()}: {fmt_kd(row['y'])} (outside band {fmt_kd(row['lower'])} - {fmt_kd(row['upper'])})")
+                    else:
+                        answer_lines.append("- No anomalies detected.")
+                elif "recommend" in q or "suggest" in q:
+                    answer_lines = rec_lines
+                elif "segment" in q or "rfm" in q:
+                    if not segment_sales.empty:
+                        for seg, val in segment_sales.head(5).items():
+                            answer_lines.append(f"- {seg}: {fmt_kd(val)}")
+                    else:
+                        answer_lines.append("- No RFM segment data available.")
                 else:
-                    answer_lines.append("- No return data available in the selected period.")
-            elif "e-com" in q or "talabat" in q or "channel" in q:
-                answer_lines.append(f"- Retail: {fmt_kd(total_retail_ai)} ({retail_pct_ai:.0f}%)")
-                answer_lines.append(f"- E-com: {fmt_kd(total_ecom_ai)} ({ecom_pct_ai:.0f}%)")
-            elif "forecast" in q or "run rate" in q:
-                answer_lines.append(f"- Current sales/day: {fmt_kd(current_sales_per_day_ai)}")
-                answer_lines.append(f"- Prophet forecast month-end KA sales: {fmt_kd(forecast_month_end_ka_ai)}")
-                if exp_forecast is not None:
-                    answer_lines.append(f"- Holt-Winters 30-day forecast total: {fmt_kd(exp_forecast.sum())}")
-                if lin_forecast is not None:
-                    answer_lines.append(f"- Linear trend 30-day forecast total: {fmt_kd(lin_forecast.sum())}")
-            elif "correlation" in q or "corr" in q:
-                if alloc_pulse and pd.notnull(alloc_pulse["target_sales_corr"]):
-                    answer_lines.append(f"- Correlation between historical sales and targets: {alloc_pulse['target_sales_corr']:.2f}")
-                else:
-                    answer_lines.append("- Correlation data not available.")
-                # Add sales vs returns corr example
-                if not df_ai.empty:
-                    df_corr = df_ai[["Net Value"]].copy()
-                    df_corr["is_return"] = df_ai["Billing Type"].isin(["YKRE", "ZRE"]).astype(int)
-                    corr_sales_ret = df_corr.corr().iloc[0,1]
-                    answer_lines.append(f"- Example: Sales vs Returns indicator: {corr_sales_ret:.2f}")
-            elif "growth" in q or "fastest" in q:
-                if not ytd_df.empty:
-                    # Compute growth rates by salesman (last 30d vs prior)
-                    p = ytd_quick_compare(ytd_df)
-                    if p:
-                        df_p1_sm = ytd_df[(ytd_df["Billing Date"] >= pd.to_datetime(p["p1_start"])) & (ytd_df["Billing Date"] < pd.to_datetime(p["p1_end"]))].groupby("Driver Name EN")["Net Value"].sum()
-                        df_p2_sm = ytd_df[(ytd_df["Billing Date"] >= pd.to_datetime(p["p2_start"])) & (ytd_df["Billing Date"] <= pd.to_datetime(p["p2_end"]))].groupby("Driver Name EN")["Net Value"].sum()
-                        growth = ((df_p2_sm - df_p1_sm) / df_p1_sm * 100).dropna().sort_values(ascending=False).head(5)
-                        for name, val in growth.items():
-                            answer_lines.append(f"- {name}: {val:.0f}% growth")
-                else:
-                    answer_lines.append("- Growth data requires YTD sheet.")
-            elif "anomaly" in q or "outlier" in q:
-                if not anomalies_ai.empty:
-                    for idx, row in anomalies_ai.iterrows():
-                        answer_lines.append(f"- {row['ds'].date()}: {fmt_kd(row['y'])} (outside band {fmt_kd(row['lower'])} - {fmt_kd(row['upper'])})")
-                else:
-                    answer_lines.append("- No anomalies detected.")
-            elif "recommend" in q or "suggest" in q:
-                answer_lines = rec_lines
-            elif "segment" in q or "rfm" in q:
-                if not segment_sales.empty:
-                    for seg, val in segment_sales.head(5).items():
-                        answer_lines.append(f"- {seg}: {fmt_kd(val)}")
-                else:
-                    answer_lines.append("- No RFM segment data available.")
-            else:
-                # Default: provide quick highlights
-                answer_lines.append(f"- Total sales in period: {fmt_kd(total_sales_all)}")
-                if total_ka_target_all_ai > 0:
-                    answer_lines.append(f"- KA achievement: {ka_ach_pct:.0f}%")
-                if total_tal_target_all_ai > 0:
-                    answer_lines.append(f"- Talabat achievement: {tal_ach_pct:.0f}%")
+                    # Default: provide quick highlights
+                    answer_lines.append(f"- Total sales in period: {fmt_kd(total_sales_all)}")
+                    if total_ka_target_all_ai > 0:
+                        answer_lines.append(f"- KA achievement: {ka_ach_pct:.0f}%")
+                    if total_tal_target_all_ai > 0:
+                        answer_lines.append(f"- Talabat achievement: {tal_ach_pct:.0f}%")
 
-            st.write("\n".join(answer_lines))            
+                st.write("\n".join(answer_lines))            
             
 # ---------------- Customer Insights Page (Full Pro Version, Fixed) ----------------
 elif choice == texts[lang]["customer_insights"]:
@@ -3644,96 +3760,96 @@ elif choice == texts[lang]["customer_insights"]:
     rfm_agg["Segment"] = rfm_agg.apply(rfm_segment, axis=1)
 
     # --- Layout Tabs: RFM, Cohort, Weekly CRM ---
-    tab_rfm, tab_cohort, tab_weekly, tab_360 = st.tabs([
-    texts[lang]["rfm_analysis_sub"], 
-    texts[lang]["rfm_cohort_sub"], 
+    tab_weekly, tab_360 = st.tabs([
+    # texts[lang]["rfm_analysis_sub"], 
+    # texts[lang]["rfm_cohort_sub"], 
     "CRM & Weekly Operations",
     "Customer 360°"  # ← NEW TAB
 ])
 
-    # ---------------- RFM Tab ----------------
-    with tab_rfm:
-        st.subheader(texts[lang]["rfm_table_sub"])
-        display_rfm = rfm_agg.copy()
-        display_rfm[["Recency","Frequency","Monetary"]] = display_rfm[["Recency","Frequency","Monetary"]].astype(int)
-        st.dataframe(display_rfm.sort_values("Monetary", ascending=False), use_container_width=True)
+    # # ---------------- RFM Tab ----------------
+    # with tab_rfm:
+    #     st.subheader(texts[lang]["rfm_table_sub"])
+    #     display_rfm = rfm_agg.copy()
+    #     display_rfm[["Recency","Frequency","Monetary"]] = display_rfm[["Recency","Frequency","Monetary"]].astype(int)
+    #     st.dataframe(display_rfm.sort_values("Monetary", ascending=False), use_container_width=True)
 
-        # Download with safe sheet name
-        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        safe_sheet = "RFM_Analysis"[:31]
-        if st.download_button(
-            texts[lang]["rfm_download"],
-            data=to_excel_bytes(display_rfm.reset_index(), sheet_name=safe_sheet),
-            file_name=f"rfm_analysis_{ts}.xlsx"
-        ):
-            st.session_state["audit_log"].append({"user": username, "action":"download","details":f"rfm_analysis_{ts}.xlsx","timestamp":datetime.now().isoformat()})
+    #     # Download with safe sheet name
+    #     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    #     safe_sheet = "RFM_Analysis"[:31]
+    #     if st.download_button(
+    #         texts[lang]["rfm_download"],
+    #         data=to_excel_bytes(display_rfm.reset_index(), sheet_name=safe_sheet),
+    #         file_name=f"rfm_analysis_{ts}.xlsx"
+    #     ):
+    #         st.session_state["audit_log"].append({"user": username, "action":"download","details":f"rfm_analysis_{ts}.xlsx","timestamp":datetime.now().isoformat()})
 
-        # Segment Pie + metrics
-        st.subheader("RFM Segment Distribution")
-        seg_counts = display_rfm["Segment"].value_counts().reset_index()
-        seg_counts.columns = ["Segment", "Count"]
-        seg_counts["Percentage"] = (seg_counts["Count"]/seg_counts["Count"].sum()*100).round(1)
-        seg_avg = display_rfm.groupby("Segment")["Monetary"].mean().round(2).reset_index().rename(columns={"Monetary":"Avg Monetary"})
-        seg_counts = seg_counts.merge(seg_avg, on="Segment", how="left")
-        fig_seg = px.pie(seg_counts, names="Segment", values="Count", hole=0.35, hover_data=["Percentage","Avg Monetary"], title="RFM Segment Distribution")
-        fig_seg.update_traces(textinfo='percent+label')
-        st.plotly_chart(fig_seg, use_container_width=True)
+    #     # Segment Pie + metrics
+    #     st.subheader("RFM Segment Distribution")
+    #     seg_counts = display_rfm["Segment"].value_counts().reset_index()
+    #     seg_counts.columns = ["Segment", "Count"]
+    #     seg_counts["Percentage"] = (seg_counts["Count"]/seg_counts["Count"].sum()*100).round(1)
+    #     seg_avg = display_rfm.groupby("Segment")["Monetary"].mean().round(2).reset_index().rename(columns={"Monetary":"Avg Monetary"})
+    #     seg_counts = seg_counts.merge(seg_avg, on="Segment", how="left")
+    #     fig_seg = px.pie(seg_counts, names="Segment", values="Count", hole=0.35, hover_data=["Percentage","Avg Monetary"], title="RFM Segment Distribution")
+    #     fig_seg.update_traces(textinfo='percent+label')
+    #     st.plotly_chart(fig_seg, use_container_width=True)
 
-        st.subheader("Key Metrics per Segment")
-        seg_metrics = display_rfm.groupby("Segment").agg(
-            mean_recency=("Recency","mean"),
-            mean_frequency=("Frequency","mean"),
-            mean_monetary=("Monetary","mean"),
-            count=("R_Score","count")
-        ).round(2).rename(columns={"count":"Count"})
-        st.dataframe(seg_metrics, use_container_width=True)
+    #     st.subheader("Key Metrics per Segment")
+    #     seg_metrics = display_rfm.groupby("Segment").agg(
+    #         mean_recency=("Recency","mean"),
+    #         mean_frequency=("Frequency","mean"),
+    #         mean_monetary=("Monetary","mean"),
+    #         count=("R_Score","count")
+    #     ).round(2).rename(columns={"count":"Count"})
+    #     st.dataframe(seg_metrics, use_container_width=True)
 
-        st.subheader("Prescriptive Actions per Segment")
-        recs = {
-            "Champions":"Reward with exclusive offers & loyalty programs.",
-            "Loyal Customers":"Upsell & referrals.",
-            "Potential Loyalists":"Nurture with targeted campaigns.",
-            "New Customers":"Onboard & incentivize repeat purchase.",
-            "At Risk":"Win-back campaigns and surveys.",
-            "Hibernating":"Reactivate with promotions.",
-            "Others":"Investigate further."
-        }
-        for s in seg_metrics.index:
-            st.write(f"- **{s}**: {recs.get(s,'General engagement strategies recommended.')}")
+    #     st.subheader("Prescriptive Actions per Segment")
+    #     recs = {
+    #         "Champions":"Reward with exclusive offers & loyalty programs.",
+    #         "Loyal Customers":"Upsell & referrals.",
+    #         "Potential Loyalists":"Nurture with targeted campaigns.",
+    #         "New Customers":"Onboard & incentivize repeat purchase.",
+    #         "At Risk":"Win-back campaigns and surveys.",
+    #         "Hibernating":"Reactivate with promotions.",
+    #         "Others":"Investigate further."
+    #     }
+    #     for s in seg_metrics.index:
+    #         st.write(f"- **{s}**: {recs.get(s,'General engagement strategies recommended.')}")
 
-        st.subheader(texts[lang]["rfm_chart_sub"])
-        fig_rfm = px.scatter(display_rfm.reset_index(), x="Recency", y="Monetary", size="Frequency", color="Segment",
-                             hover_name=display_rfm.reset_index()["Customer"], title="RFM Scatter (Recency vs Monetary; size=Frequency)")
-        st.plotly_chart(fig_rfm, use_container_width=True)
+    #     st.subheader(texts[lang]["rfm_chart_sub"])
+    #     fig_rfm = px.scatter(display_rfm.reset_index(), x="Recency", y="Monetary", size="Frequency", color="Segment",
+    #                          hover_name=display_rfm.reset_index()["Customer"], title="RFM Scatter (Recency vs Monetary; size=Frequency)")
+    #     st.plotly_chart(fig_rfm, use_container_width=True)
 
-    # ---------------- Cohort Tab (Fixed) ----------------
-    with tab_cohort:
-        st.subheader(texts[lang]["rfm_cohort_sub"])
-        st.info(texts[lang]["rfm_cohort_info"])
+    # # ---------------- Cohort Tab (Fixed) ----------------
+    # with tab_cohort:
+    #     st.subheader(texts[lang]["rfm_cohort_sub"])
+    #     st.info(texts[lang]["rfm_cohort_info"])
 
-        df_cohort = df_rfm[[cust_col, date_col, amount_col]].dropna().copy().rename(columns={cust_col:"Customer", date_col:"Billing Date"})
+    #     df_cohort = df_rfm[[cust_col, date_col, amount_col]].dropna().copy().rename(columns={cust_col:"Customer", date_col:"Billing Date"})
 
-        # Convert periods to strings
-        df_cohort["Cohort_Month_Str"] = df_cohort.groupby("Customer")["Billing Date"].transform("min").dt.to_period("M").astype(str)
-        df_cohort["Period_Month_Str"] = df_cohort["Billing Date"].dt.to_period("M").astype(str)
-        df_cohort["Cohort_Index"] = (pd.to_datetime(df_cohort["Period_Month_Str"]) - pd.to_datetime(df_cohort["Cohort_Month_Str"])).dt.days // 30
+    #     # Convert periods to strings
+    #     df_cohort["Cohort_Month_Str"] = df_cohort.groupby("Customer")["Billing Date"].transform("min").dt.to_period("M").astype(str)
+    #     df_cohort["Period_Month_Str"] = df_cohort["Billing Date"].dt.to_period("M").astype(str)
+    #     df_cohort["Cohort_Index"] = (pd.to_datetime(df_cohort["Period_Month_Str"]) - pd.to_datetime(df_cohort["Cohort_Month_Str"])).dt.days // 30
 
-        cohort_summary = df_cohort.groupby(["Cohort_Month_Str","Cohort_Index"]).agg(
-            Customer=("Customer","nunique"),
-            Monetary=(amount_col,"mean")
-        ).reset_index()
+    #     cohort_summary = df_cohort.groupby(["Cohort_Month_Str","Cohort_Index"]).agg(
+    #         Customer=("Customer","nunique"),
+    #         Monetary=(amount_col,"mean")
+    #     ).reset_index()
 
-        if not cohort_summary.empty:
-            cohort_pivot = cohort_summary.pivot(index="Cohort_Month_Str", columns="Cohort_Index", values="Monetary").fillna(0)
-            fig_cohort = px.imshow(cohort_pivot, labels=dict(x="Months after acquisition", y="Cohort", color="Avg Monetary"),
-                                   title="Cohort Monetary Heatmap", text_auto=True, aspect="auto")
-            st.plotly_chart(fig_cohort, use_container_width=True)
+    #     if not cohort_summary.empty:
+    #         cohort_pivot = cohort_summary.pivot(index="Cohort_Month_Str", columns="Cohort_Index", values="Monetary").fillna(0)
+    #         fig_cohort = px.imshow(cohort_pivot, labels=dict(x="Months after acquisition", y="Cohort", color="Avg Monetary"),
+    #                                title="Cohort Monetary Heatmap", text_auto=True, aspect="auto")
+    #         st.plotly_chart(fig_cohort, use_container_width=True)
 
-            st.subheader(texts[lang]["rfm_cohort_table_sub"])
-            cohort_table = cohort_summary.pivot(index="Cohort_Month_Str", columns="Cohort_Index", values="Customer").fillna(0).astype(int)
-            st.dataframe(cohort_table, use_container_width=True)
-        else:
-            st.warning(texts[lang]["rfm_cohort_no_data"])
+    #         st.subheader(texts[lang]["rfm_cohort_table_sub"])
+    #         cohort_table = cohort_summary.pivot(index="Cohort_Month_Str", columns="Cohort_Index", values="Customer").fillna(0).astype(int)
+    #         st.dataframe(cohort_table, use_container_width=True)
+    #     else:
+    #         st.warning(texts[lang]["rfm_cohort_no_data"])
 
     # ---------------- CRM & Weekly Operations Tab ----------------
     with tab_weekly:
@@ -3925,7 +4041,7 @@ elif choice == texts[lang]["customer_insights"]:
                                       file_name=f"{sel_cust}_purchased_15days_{selected_date}.xlsx"):
                     st.success("Download ready!")
 
-# ──────────────────────── TAB 4: Customer 360° (FIXED) ────────────────────────
+    # ──────────────────────── TAB 4: Customer 360° (FIXED) ────────────────────────
     with tab_360:
         st.markdown("### **Customer 360° – One-Click Profile**")
         
@@ -3940,6 +4056,7 @@ elif choice == texts[lang]["customer_insights"]:
         date_col = find_col(df_rfm, ["Billing Date", "Date", "Invoice Date"])
         amount_col = find_col(df_rfm, ["Net Value", "Amount", "Sales"])
         driver_col = find_col(df_rfm, ["Driver Name EN", "Salesman", "Driver", "Rep"])
+        material_col = find_col(df_rfm, ["Material", "Material Description", "Item", "SKU"])
 
         if not all([cust_col, date_col, amount_col]):
             st.error("Missing required columns. Check your Excel file.")
@@ -3958,10 +4075,9 @@ elif choice == texts[lang]["customer_insights"]:
         if cust_sales.empty:
             st.warning(f"No sales data for **{selected_cust}**")
         else:
-        
-        # ========================================
-        # KPI CARDS – CUSTOMER 360° (FINAL VERSION)
-        # ========================================
+            # ========================================
+            # KPI CARDS – CUSTOMER 360°
+            # ========================================
             col1, col2, col3, col4 = st.columns(4)
             
             # --- 1. ENSURE amount_col is numeric ---
@@ -3979,7 +4095,10 @@ elif choice == texts[lang]["customer_insights"]:
 
             # --- 4. RETURNS ONLY (YKRE, ZRE) – CANCELLATIONS EXCLUDED ---
             return_codes = ["YKRE", "ZRE"]  # Only Returns
-            returns_mask = cust_sales["Billing Type"].isin(return_codes)
+            if "Billing Type" in cust_sales.columns:
+                returns_mask = cust_sales["Billing Type"].isin(return_codes)
+            else:
+                returns_mask = cust_sales[date_col].notna() & False  # no returns if column missing
             returns_df = cust_sales[returns_mask]
 
             # --- 5. RETURN VALUE = ABSOLUTE SUM (handles negative values) ---
@@ -4036,6 +4155,7 @@ elif choice == texts[lang]["customer_insights"]:
                 "Sales Trend", "RFM", "Visits", "Issues", "Actions"
             ])
 
+            # ───────── Mini Tab 1: Sales Trend ─────────
             with mini_tab1:
                 daily = cust_sales.groupby(cust_sales[date_col].dt.date)[amount_col].sum().reset_index()
                 daily.columns = ["Date", "Sales"]
@@ -4043,6 +4163,7 @@ elif choice == texts[lang]["customer_insights"]:
                 fig.update_layout(height=300)
                 st.plotly_chart(fig, use_container_width=True)
 
+            # ───────── Mini Tab 2: RFM ─────────
             with mini_tab2:
                 if selected_cust in rfm_agg.index:
                     r = rfm_agg.loc[selected_cust]
@@ -4054,8 +4175,8 @@ elif choice == texts[lang]["customer_insights"]:
                 else:
                     st.info("RFM not calculated yet")
 
+            # ───────── Mini Tab 3: Visits ─────────
             with mini_tab3:
-                # FIXED: driver_col is now defined!
                 if driver_col and driver_col in cust_sales.columns:
                     visits = cust_sales[[date_col, driver_col]].drop_duplicates()
                     visits = visits.sort_values(date_col, ascending=False).head(20)
@@ -4065,23 +4186,89 @@ elif choice == texts[lang]["customer_insights"]:
                 else:
                     st.info("No salesman data available")
 
+                        # ───────── Mini Tab 4: Issues (Returns + Material Details) ─────────
+                        # ───────── Mini Tab 4: Issues (Returns + Material Details) ─────────
             with mini_tab4:
                 issues = cust_sales[returns_mask]
+
                 if not issues.empty:
+                    # Main returns summary by invoice/date
                     st.error(f"**Returns: KD {returns_value:,.0f} ({return_rate:.2f}%)**")
                     st.dataframe(
-                        issues[["Billing Date", "Billing Type", amount_col]].rename(columns={amount_col: "Return Value"}),
+                        issues[[date_col, "Billing Type", amount_col]].rename(
+                            columns={date_col: "Billing Date", amount_col: "Return Value"}
+                        ),
                         use_container_width=True
                     )
+
+                    # ---- Return Material Details table ----
+                    st.markdown("#### Return Material Details")
+
+                    # Prefer Material Description-like columns first
+                    desc_candidates = [
+                        "Material Description",
+                        "Material Desc",
+                        "Material Description EN",
+                        "Material Description AR",
+                        "MAT Description",
+                    ]
+                    desc_col = None
+                    for c in desc_candidates:
+                        if c in issues.columns:
+                            desc_col = c
+                            break
+
+                    # Fallback: if no description column, use material_col (code)
+                    if not desc_col and material_col and material_col in issues.columns:
+                        desc_col = material_col
+
+                    if desc_col:
+                        issues_mat = issues.copy()
+                        issues_mat[amount_col] = (
+                            pd.to_numeric(issues_mat[amount_col], errors="coerce")
+                            .fillna(0.0)
+                            .abs()
+                        )
+
+                        # Group by the chosen description column
+                        mat_summary = (
+                            issues_mat
+                            .groupby(desc_col)[amount_col]
+                            .sum()
+                            .reset_index()
+                            .rename(columns={desc_col: "Material Description", amount_col: "Return Value"})
+                            .sort_values("Return Value", ascending=False)
+                        )
+
+                        # Add Total row at end
+                        total_val = mat_summary["Return Value"].sum()
+                        total_row = {
+                            "Material Description": "Total",
+                            "Return Value": total_val
+                        }
+                        mat_summary = pd.concat(
+                            [mat_summary, pd.DataFrame([total_row])],
+                            ignore_index=True
+                        )
+
+                        st.dataframe(mat_summary, use_container_width=True)
+                    else:
+                        st.info("No material description column found for returns.")
                 else:
                     st.success("**No Returns – Perfect!**")
+
+            # ───────── Mini Tab 5: Actions ─────────
             with mini_tab5:
                 st.markdown("#### **Smart Actions**")
                 actions = []
-                if days_since > 30: actions.append("**URGENT:** Schedule visit TODAY")
-                if return_rate > 10: actions.append("Call about quality issues")
-                if total_sales > 5000: actions.append("Offer premium products")
-                if order_count > 15: actions.append("Send loyalty reward")
+                if days_since > 30:
+                    actions.append("**URGENT:** Schedule visit TODAY")
+                if return_rate > 10:
+                    actions.append("Call about quality issues")
+                if total_sales > 5000:
+                    actions.append("Offer premium products")
+                if order_count > 15:
+                    actions.append("Send loyalty reward")
 
                 for a in actions:
                     st.markdown(f"• {a}")
@@ -4095,9 +4282,15 @@ elif choice == texts[lang]["customer_insights"]:
                 # Download Profile
                 profile = pd.DataFrame({
                     "Metric": ["Customer", "Total Sales", "Orders", "Last Visit", "Days Since", "Return Rate %", "Note"],
-                    "Value": [selected_cust, total_sales, order_count, 
-                            last_visit.strftime("%Y-%m-%d") if pd.notna(last_visit) else "N/A",
-                            days_since, return_rate, note]
+                    "Value": [
+                        selected_cust,
+                        total_sales,
+                        order_count,
+                        last_visit.strftime("%Y-%m-%d") if pd.notna(last_visit) else "N/A",
+                        days_since,
+                        return_rate,
+                        note
+                    ]
                 })
                 st.download_button(
                     "**Download Profile (Excel)**",
