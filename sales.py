@@ -122,11 +122,11 @@ texts = {
         "days_finished": "Days Finished (working)",
         "current_sales_per_day": "Current Sales Per Day",
         "forecast_month_end": "Forecasted Month-End KA Sales",
-        "sales_targets_summary_sub": "📋 Sales & Targets Summary",
+        "sales_targets_summary_sub": "📋 Sales & Targets Summary-Value",
         "download_sales_targets": "⬇️ Download Sales & Targets Summary (Excel)",
-        "sales_by_billing_sub": "📊 Sales by Billing Type per Salesman",
+        "sales_by_billing_sub": "📊 Sales By Billing Type-Value",
         "download_billing": "⬇️ Download Billing Type Table (Excel)",
-        "sales_by_py_sub": "🏬 Sales By Customer",
+        "sales_by_py_sub": "🏬 Sales Summary By Customer-Value",
         "download_py": "⬇️ Download PY Name Table (Excel)",
         "daily_sales_trend_sub": "📊 Daily Sales Trend And Forecast",
         "daily_sales_title": "Daily Sales Trend And Forecast",
@@ -137,7 +137,7 @@ texts = {
         "daily_ka_title": "Daily KA Target vs Actual Sales",
         "salesman_ka_sub": "📊 Salesman KA Target vs Actual",
         "salesman_ka_title": "KA Target vs Actual Sales by Salesman",
-        "top10_py_sub": "📊 Top 10 Customer by Sales",
+        "top10_py_sub": "📊 Top 10 Customers",
         "top10_py_title": "Top 10 Customer 1 by Sales",
         "download_reports_sub": "💾 Download Reports",
         "generate_pptx": "📑 Generate PPTX Report",
@@ -1096,61 +1096,183 @@ elif choice == texts[lang]["sales_tracking"]:
 
                     # --- TABLES ---
                     with tabs[1]:
-                        # --- Sales & Targets Summary ---
+
                         st.subheader(texts[lang]["sales_targets_summary_sub"])
+
+                        # ================= TOTAL SECTION (KA) =================
+                        total_target = ka_targets          # index: Driver Name EN
+                        total_sales = total_sales          # same index
+
+                        total_balance = (total_target - total_sales).clip(lower=0)
+                        total_percent = np.where(
+                            total_target != 0,
+                            (total_sales / total_target * 100).round(0),
+                            0
+                        )
+
+                        # ================= MERGE SALES + CHANNELS (BY CUSTOMER) =================
+                        # Sales sheet: Driver Name EN + PY Name 1 + Net Value
+                        df_sales = df_filtered[["Driver Name EN", "PY Name 1", "Net Value"]].copy()
+
+                        # Channels sheet: PY Name 1 + Channels
+                        df_sales = df_sales.merge(
+                            channels_df[["PY Name 1", "Channels"]],
+                            on="PY Name 1",
+                            how="left"
+                        )
+
+                        df_sales["Channels"] = df_sales["Channels"].str.lower().str.strip().fillna("market")
+
+                        # ================= E-COM SALES (BY SALESMAN) =================
+                        ecom_sales_by_sm = (
+                            df_sales[df_sales["Channels"] == "e-com"]
+                            .groupby("Driver Name EN")["Net Value"].sum()
+                            .reindex(total_target.index, fill_value=0)
+                        )
+
+                        # ================= MARKET SALES (BY SALESMAN) =================
+                        market_sales_by_sm = (
+                            df_sales[df_sales["Channels"] != "e-com"]
+                            .groupby("Driver Name EN")["Net Value"].sum()
+                            .reindex(total_target.index, fill_value=0)
+                        )
+
+                        # ================= E-COM TARGETS =================
+                        if "E-Com Target" in target_df.columns:
+                            ecom_target = target_df.set_index("Driver Name EN")["E-Com Target"]
+                            ecom_target = ecom_target.reindex(total_target.index, fill_value=0)
+                        else:
+                            ecom_target = pd.Series(0, index=total_target.index)
+
+                        # ============== E-COM KPIs =====================
+                        ecom_balance = (ecom_target - ecom_sales_by_sm).clip(lower=0)
+                        ecom_percent = np.where(
+                            ecom_target != 0,
+                            (ecom_sales_by_sm / ecom_target * 100).round(0),
+                            0
+                        )
+
+                        # ============== MARKET KPIs =====================
+                        market_target = (total_target - ecom_target).clip(lower=0)
+                        market_balance = (market_target - market_sales_by_sm).clip(lower=0)
+                        market_percent = np.where(
+                            market_target != 0,
+                            (market_sales_by_sm / market_target * 100).round(0),
+                            0
+                        )
+
+                        # ================= FINAL TABLE (ROW LEVEL) ==================
                         report_df = pd.DataFrame({
-                            "Salesman": ka_targets.index,
-                            "KA Target": ka_targets.values,
-                            "KA Sales": total_sales.values,
-                            "KA Remaining": ka_gap.values,
-                            "KA % Achieved": np.where(ka_targets.values != 0, (total_sales.values / ka_targets.values * 100).round(0), 0),
-                            "Talabat Target": talabat_targets.values,
-                            "Talabat Sales": talabat_sales.values,
-                            "Talabat Remaining": talabat_gap.values,
-                            "Talabat % Achieved": np.where(talabat_targets.values != 0, (talabat_sales.values / talabat_targets.values * 100).round(0), 0)
+                            "Salesman Name": total_target.index,
+
+                            "Total Target": total_target.values,
+                            "Total Sales": total_sales.values,
+                            "Total Balance": total_balance.values,
+                            "Total % Achieved": total_percent,
+
+                            "Market Target": market_target.values,
+                            "Market Sales": market_sales_by_sm.values,
+                            "Market Balance": market_balance.values,
+                            "Market % Achieved": market_percent,
+
+                            "E-Com Target": ecom_target.values,
+                            "E-Com Sales": ecom_sales_by_sm.values,
+                            "E-Com Balance": ecom_balance.values,
+                            "E-Com % Achieved": ecom_percent
                         })
 
+                        # ================= TOTAL ROW (RECALC FROM TOTALS) ==================
                         total_row = report_df.sum(numeric_only=True).to_frame().T
                         total_row.index = ["Total"]
-                        total_row["KA % Achieved"] = round(total_row["KA Sales"]/total_row["KA Target"]*100,0) if total_row["KA Target"].iloc[0]!=0 else 0
-                        total_row["Talabat % Achieved"] = round(total_row["Talabat Sales"]/total_row["Talabat Target"]*100,0) if total_row["Talabat Target"].iloc[0]!=0 else 0
 
-                        total_row = total_row.reset_index(drop=True)
-                        total_row["Salesman"] = "Total"
+                        tt = total_row["Total Target"].iloc[0]
+                        ts = total_row["Total Sales"].iloc[0]
+                        mt = total_row["Market Target"].iloc[0]
+                        ms = total_row["Market Sales"].iloc[0]
+                        et = total_row["E-Com Target"].iloc[0]
+                        es = total_row["E-Com Sales"].iloc[0]
+
+                        # Balances from GRAND totals
+                        total_row["Total Balance"] = max(tt - ts, 0)
+                        total_row["Market Balance"] = max(mt - ms, 0)
+                        total_row["E-Com Balance"] = max(et - es, 0)
+
+                        # % Achieved from GRAND totals
+                        total_row["Total % Achieved"] = round(ts / tt * 100, 0) if tt != 0 else 0
+                        total_row["Market % Achieved"] = round(ms / mt * 100, 0) if mt != 0 else 0
+                        total_row["E-Com % Achieved"] = round(es / et * 100, 0) if et != 0 else 0
+
+                        total_row["Salesman Name"] = "Total"
                         total_row = total_row[report_df.columns]
+
                         report_df_with_total = pd.concat([report_df, total_row], ignore_index=True)
 
-                        def highlight_total_row(row):
-                            return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row['Salesman'] == "Total" else '' for _ in row]
+                        # ================= SORTING (BEST FIRST, TOTAL LAST) =================
+                        data_part = report_df_with_total[report_df_with_total["Salesman Name"] != "Total"].copy()
+                        total_part = report_df_with_total[report_df_with_total["Salesman Name"] == "Total"].copy()
 
+                        data_part = data_part.sort_values("Total % Achieved", ascending=False)
+                        report_df_sorted = pd.concat([data_part, total_part], ignore_index=True)
+
+                        # ================= STYLING HELPERS =================
+                        def zebra_row_style(row):
+                            """Zebra rows + highlight Total row."""
+                            if row["Salesman Name"] == "Total":
+                                return ['background-color: #BFDBFE; color: #1E3A8A; font-weight:900'
+                                        for _ in row]
+                            return [
+                                'background-color: #F9FAFB' if row.name % 2 == 0 else ''
+                                for _ in row
+                            ]
+
+                        def kpi_color(val):
+                            """Green / amber / red for % KPIs."""
+                            if pd.isna(val):
+                                return ''
+                            try:
+                                v = float(val)
+                            except Exception:
+                                return ''
+                            if v >= 100:
+                                return 'color: #166534; font-weight:700'   # dark green
+                            elif v >= 80:
+                                return 'color: #92400E; font-weight:600'   # amber
+                            else:
+                                return 'color: #991B1B; font-weight:700'   # red
+
+                        percent_cols = [
+                            "Total % Achieved",
+                            "Market % Achieved",
+                            "E-Com % Achieved",
+                        ]
+
+                        # ================= FINAL STYLED TABLE =================
                         styled_report = (
-                            report_df_with_total.style
+                            report_df_sorted.style
                             .set_table_styles([
-                                {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
-                                                            ('font-weight', '800'), ('height', '40px'),
-                                                            ('line-height', '40px'), ('border', '1px solid #E5E7EB')] }
+                                {
+                                    'selector': 'th',
+                                    'props': [
+                                        ('background', '#BFDBFE'),
+                                        ('color', '#1E3A8A'),
+                                        ('font-weight', '900'),
+                                        ('height', '40px'),
+                                        ('line-height', '40px'),
+                                        ('border', '1px solid #E5E7EB')
+                                    ]
+                                }
                             ])
-                            .apply(highlight_total_row, axis=1)
-                            .format("{:,.0f}", subset=["KA Target","KA Sales","KA Remaining",
-                                                    "Talabat Target","Talabat Sales","Talabat Remaining"])
-                            .format("{:.0f}%", subset=["KA % Achieved","Talabat % Achieved"])
+                            .apply(zebra_row_style, axis=1)
+                            .format("{:,.0f}", subset=[
+                                "Total Target","Total Sales","Total Balance",
+                                "Market Target","Market Sales","Market Balance",
+                                "E-Com Target","E-Com Sales","E-Com Balance"
+                            ])
+                            .format("{:.0f}%", subset=percent_cols)
+                            .applymap(kpi_color, subset=percent_cols)
                         )
+
                         st.dataframe(styled_report, use_container_width=True, hide_index=True)
-
-                        if st.download_button(
-                            texts[lang]["download_sales_targets"],
-                            data=to_excel_bytes(report_df_with_total, sheet_name="Sales_Targets_Summary", index=False),
-                            file_name=f"Sales_Targets_Summary_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        ):
-                            st.session_state["audit_log"].append({
-                                "user": username,
-                                "action": "download",
-                                "details": "Sales & Targets Summary Excel",
-                                "timestamp": datetime.now()
-                            })
-
-
                         # --- Sales by Billing Type per Salesman ---
                         st.subheader(texts[lang]["sales_by_billing_sub"])
                         billing_wide = df_filtered.pivot_table(
@@ -1213,19 +1335,34 @@ elif choice == texts[lang]["sales_tracking"]:
                             })
 
 
-                        # --- Sales by PY Name 1 ---
+                        # --- Sales by Customer Name ---
                         st.subheader(texts[lang]["sales_by_py_sub"])
-                        py_table = df_filtered.groupby("PY Name 1")["Net Value"].sum().sort_values(ascending=False).to_frame(name="Sales")
-                        py_table["Contribution %"] = np.where(py_table["Sales"] != 0,
-                                                            (py_table["Sales"]/py_table["Sales"].sum()*100).round(0), 0)
+
+                        py_table = (
+                            df_filtered.groupby("PY Name 1")["Net Value"]
+                            .sum()
+                            .sort_values(ascending=False)
+                            .to_frame(name="Sales")
+                        )
+
+                        py_table["Contribution %"] = np.where(
+                            py_table["Sales"] != 0,
+                            (py_table["Sales"]/py_table["Sales"].sum()*100).round(0),
+                            0
+                        )
 
                         total_row = py_table.sum(numeric_only=True).to_frame().T
                         total_row.index = ["Total"]
+
                         py_table_with_total = pd.concat([py_table, total_row])
-                        py_table_with_total.index.name = "PY Name 1"
+                        py_table_with_total.index.name = "Customer Name"   # << CHANGE HERE
 
                         def highlight_total_row_py(row):
-                            return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
+                            return [
+                                'background-color: #BFDBFE; color: #1E3A8A; font-weight: 900'
+                                if row.name == "Total" else ''
+                                for _ in row
+                            ]
 
                         styled_py = (
                             py_table_with_total.style
@@ -1238,24 +1375,25 @@ elif choice == texts[lang]["sales_tracking"]:
                             .format("{:,.0f}", subset=["Sales"])
                             .format("{:.0f}%", subset=["Contribution %"])
                         )
+
                         st.dataframe(styled_py, use_container_width=True, hide_index=False)
 
                         if st.download_button(
                             texts[lang]["download_py"],
-                            data=to_excel_bytes(py_table_with_total.reset_index(), sheet_name="Sales_by_PY_Name", index=False),
-                            file_name=f"Sales_by_PY_Name_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                            data=to_excel_bytes(py_table_with_total.reset_index(), sheet_name="Sales_by_Customer", index=False),  # << UPDATED
+                            file_name=f"Sales_by_Customer_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         ):
                             st.session_state["audit_log"].append({
                                 "user": username,
                                 "action": "download",
-                                "details": "PY Name Table Excel",
+                                "details": "Customer Name Table Excel",
                                 "timestamp": datetime.now()
                             })
 
 
                         # --- Return by SP Name1 ---
-                        st.subheader("🔄 Return By Branch")
+                        st.subheader("🔄 Return Summary By Branch-Value")
                         sp_billing = df_filtered.pivot_table(
                             index="SP Name1",
                             columns="Billing Type",
@@ -1298,7 +1436,7 @@ elif choice == texts[lang]["sales_tracking"]:
 
 
                         # --- Return by Material Description ---
-                        st.subheader("🔄 Return by Material Description")
+                        st.subheader("🔄 Return Summary By Product")
                         if "Material Description" in df_filtered.columns:
                             material_billing = df_filtered.pivot_table(
                                 index="Material Description",
@@ -1362,7 +1500,7 @@ elif choice == texts[lang]["sales_tracking"]:
 
 
                         # --- Return by SP Name1 + Material Description ---
-                        st.subheader("🔄 Return By Branch + Material Description")
+                        st.subheader("🔄 Return Summary By Branch & Product ")
                         required_cols = {"SP Name1", "Material Description", "Billing Type", "Net Value"}
                         if required_cols.issubset(df_filtered.columns):
                             # Pivot table
@@ -1837,14 +1975,23 @@ elif choice == texts[lang]["sales_tracking"]:
                             "Talabat % Achieved": np.where(talabat_targets.values != 0, (talabat_sales.values / talabat_targets.values * 100).round(0), 0)
                         })
 
-                        total_row = report_df.sum(numeric_only=True).to_frame().T
+                        ttotal_row = report_df.sum(numeric_only=True).to_frame().T
                         total_row.index = ["Total"]
-                        total_row["KA % Achieved"] = round(total_row["KA Sales"]/total_row["KA Target"]*100,0) if total_row["KA Target"].iloc[0]!=0 else 0
-                        total_row["Talabat % Achieved"] = round(total_row["Talabat Sales"]/total_row["Talabat Target"]*100,0) if total_row["Talabat Target"].iloc[0]!=0 else 0
+
+                        total_row["Target % Achieved"] = round(
+                            total_row["Sales"]/total_row["Target"]*100,0
+                        ) if total_row["Target"].iloc[0] != 0 else 0
+
+                        total_row["E-Com % Achieved"] = round(
+                            total_row["E-Com Sales"]/total_row["E-Com Target"]*100,0
+                        ) if total_row["E-Com Target"].iloc[0] != 0 else 0
 
                         total_row = total_row.reset_index(drop=True)
-                        total_row["Salesman"] = "Total"
+                        total_row["Salesman Name"] = "Total"
+
                         total_row = total_row[report_df.columns]
+                        report_df_with_total = pd.concat([report_df, total_row], ignore_index=True)
+
                         report_df_with_total = pd.concat([report_df, total_row], ignore_index=True)
 
                         def highlight_total_row(row):
@@ -2238,245 +2385,387 @@ elif choice == texts[lang]["sales_tracking"]:
 # --- YTD Comparison Page ---
 elif choice == "Year to Date Comparison":
     if "ytd_df" in st.session_state and not st.session_state["ytd_df"].empty:
-        ytd_df = st.session_state["ytd_df"]
-        ytd_df['Billing Date'] = pd.to_datetime(ytd_df['Billing Date'])
+        ytd_df = st.session_state["ytd_df"].copy()
+
+        if "Billing Date" not in ytd_df.columns:
+            st.error("❌ 'Billing Date' column not found in YTD sheet.")
+            st.stop()
+
+        ytd_df["Billing Date"] = pd.to_datetime(ytd_df["Billing Date"], errors="coerce")
+        ytd_df = ytd_df.dropna(subset=["Billing Date"])
+
+        if "Net Value" not in ytd_df.columns:
+            st.error("❌ 'Net Value' column not found in YTD sheet.")
+            st.stop()
 
         st.title("📅 Year to Date Comparison")
-        st.markdown('<div class="tooltip">ℹ️<span class="tooltiptext">Compare sales across two periods by a selected dimension.</span></div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="tooltip">ℹ️<span class="tooltiptext">Compare sales across two periods by a selected dimension.</span></div>',
+            unsafe_allow_html=True
+        )
 
-              # --- Select Dimension ---
+        # --- Select Dimension ---
         st.subheader("📊 Choose Dimension")
 
-        # Map friendly labels to actual column names
+        # Map friendly labels to actual column names (added By Material)
         dim_options = {
-            "By Customer": "PY Name 1",       # Customer Name column
-            "By Salesman": "Driver Name EN",  # Salesman Name
-            "By Branch": "SP Name1",          # Branch Name column
+            "By Customer": "PY Name 1",          # Customer Name column
+            "By Salesman": "Driver Name EN",     # Salesman Name
+            "By Branch": "SP Name1",             # Branch Name column
+            "By Material": "Material Description"  # 👈 NEW: Material Description
         }
 
+        # Filter only dimensions where the column actually exists
+        dim_options_available = {
+            label: col for label, col in dim_options.items() if col in ytd_df.columns
+        }
+
+        if not dim_options_available:
+            st.error("❌ None of the expected dimension columns (Customer, Salesman, Branch, Material) are present.")
+            st.stop()
+
         # User sees friendly names; program uses real column names
-        dim_label = st.selectbox("Choose dimension", list(dim_options.keys()), index=0)
-        dimension = dim_options[dim_label]
+        dim_label = st.selectbox(
+            "Choose dimension",
+            list(dim_options_available.keys()),
+            index=0
+        )
+        dimension = dim_options_available[dim_label]
 
         # --- Select Two Periods ---
         st.subheader("📆 Select Two Periods")
         col1, col2 = st.columns(2)
+
+        min_date = ytd_df["Billing Date"].min().date()
+        max_date = ytd_df["Billing Date"].max().date()
+
         with col1:
             st.write("Period 1")
-            period1_range = st.date_input("Select Date Range", value=(ytd_df["Billing Date"].min(), ytd_df["Billing Date"].max()), key="ytd_p1_range")
+            period1_range = st.date_input(
+                "Select Date Range ( Click Twice Start & End Date)",
+                value=(min_date, max_date),
+                key="ytd_p1_range"
+            )
         with col2:
             st.write("Period 2")
-            period2_range = st.date_input("Select Date Range", value=(ytd_df["Billing Date"].min(), ytd_df["Billing Date"].max()), key="ytd_p2_range")
+            period2_range = st.date_input(
+                "Select Date Range ( Click Twice Start & End Date)",
+                value=(min_date, max_date),
+                key="ytd_p2_range"
+            )
 
         if period1_range and period2_range and len(period1_range) == 2 and len(period2_range) == 2:
             period1_start, period1_end = period1_range
             period2_start, period2_end = period2_range
-            df_p1 = ytd_df[(ytd_df["Billing Date"] >= pd.to_datetime(period1_start)) & (ytd_df["Billing Date"] <= pd.to_datetime(period1_end))]
-            df_p2 = ytd_df[(ytd_df["Billing Date"] >= pd.to_datetime(period2_start)) & (ytd_df["Billing Date"] <= pd.to_datetime(period2_end))]
 
-            # --- YTD Comparison Table ---
-            summary_p1 = df_p1.groupby(dimension)["Net Value"].sum().reset_index().rename(
-                columns={"Net Value": f"{period1_start.strftime('%Y-%m-%d')} to {period1_end.strftime('%Y-%m-%d')} Sales"}
-            )
-            summary_p2 = df_p2.groupby(dimension)["Net Value"].sum().reset_index().rename(
-                columns={"Net Value": f"{period2_start.strftime('%Y-%m-%d')} to {period2_end.strftime('%Y-%m-%d')} Sales"}
-            )
-            ytd_comparison = pd.merge(summary_p1, summary_p2, on=dimension, how="outer").fillna(0)
-            ytd_comparison["Difference"] = ytd_comparison.iloc[:, 2] - ytd_comparison.iloc[:, 1]
-            ytd_comparison.rename(columns={dimension: "Name"}, inplace=True)
-            ytd_comparison.loc['Total'] = ytd_comparison.sum(numeric_only=True)
-            ytd_comparison.loc['Total', 'Name'] = 'Total'
+            df_p1 = ytd_df[
+                (ytd_df["Billing Date"] >= pd.to_datetime(period1_start)) &
+                (ytd_df["Billing Date"] <= pd.to_datetime(period1_end))
+            ]
+            df_p2 = ytd_df[
+                (ytd_df["Billing Date"] >= pd.to_datetime(period2_start)) &
+                (ytd_df["Billing Date"] <= pd.to_datetime(period2_end))
+            ]
 
-            # Use friendly label in the heading
-            st.subheader(f"📋 Comparison by {dim_label}")
-
-            styled_ytd = (
-                ytd_comparison.style
-                .set_table_styles([
-                    {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'), ('font-weight', '800'), ('height', '40px'), ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
-                ])
-                .apply(lambda x: ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if x.name == 'Total' else '' for _ in x], axis=1)
-                .format("{:,.0f}", subset=[ytd_comparison.columns[1], ytd_comparison.columns[2], 'Difference'])
-            )
-            st.dataframe(styled_ytd, use_container_width=True, hide_index=False)
-
-            st.download_button(
-                "⬇️ Download YTD Comparison (Excel)",
-                data=to_excel_bytes(ytd_comparison, sheet_name="YTD_Comparison", index=False),
-                file_name=f"YTD_Comparison_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-                     # --- Top 10 Customers: Last Year vs Current Year ---
-            st.subheader("🏆 Top 10 Customers – Last Year vs Current Year")
-
-            # Make sure Billing Date is datetime
-            if not np.issubdtype(ytd_df["Billing Date"].dtype, np.datetime64):
-                ytd_df["Billing Date"] = pd.to_datetime(ytd_df["Billing Date"], errors="coerce")
-
-            ytd_df["Year"] = ytd_df["Billing Date"].dt.year
-            current_year = pd.Timestamp.today().year
-            last_year = current_year - 1
-
-            # Aggregate sales by Customer + Year
-            cust_sales = (
-                ytd_df[ytd_df["Year"].isin([last_year, current_year])]
-                .groupby(["PY Name 1", "Year"])["Net Value"]
-                .sum()
-                .reset_index()
-            )
-
-            if cust_sales.empty:
-                st.info("⚠️ No customer sales found for last year or current year.")
+            if df_p1.empty or df_p2.empty:
+                st.warning("⚠️ One of the selected periods has no data.")
             else:
-                cust_pivot = cust_sales.pivot(
-                    index="PY Name 1",
-                    columns="Year",
-                    values="Net Value"
-                ).fillna(0)
+                # --- YTD Comparison Table ---
+                col_p1_name = f"{period1_start.strftime('%Y-%m-%d')} to {period1_end.strftime('%Y-%m-%d')} Sales"
+                col_p2_name = f"{period2_start.strftime('%Y-%m-%d')} to {period2_end.strftime('%Y-%m-%d')} Sales"
 
-                # Use only year columns that actually exist (avoid KeyError)
-                year_cols = [y for y in [last_year, current_year] if y in cust_pivot.columns]
-
-                if not year_cols:
-                    st.info("⚠️ No valid year columns found to build Top 10 customers chart.")
-                else:
-                    cust_pivot["Total"] = cust_pivot[year_cols].sum(axis=1)
-                    top10_cust = cust_pivot.sort_values("Total", ascending=False).head(10).reset_index()
-
-                    # Melt for plotting
-                    top10_melt = top10_cust.melt(
-                        id_vars="PY Name 1",
-                        value_vars=year_cols,
-                        var_name="Year",
-                        value_name="Sales",
-                    )
-
-                    # Merge back the wide data for status calculation
-                    merge_cols = ["PY Name 1"] + year_cols
-                    top10_melt = top10_melt.merge(
-                        top10_cust[merge_cols],
-                        on="PY Name 1",
-                        how="left",
-                    )
-
-                    def classify_status(row):
-                        # Both last_year & current_year exist → Achieved vs Not Achieved
-                        if (last_year in year_cols) and (current_year in year_cols) and row["Year"] == current_year:
-                            return "Achieved" if row.get(current_year, 0) >= row.get(last_year, 0) else "Not Achieved"
-                        # Only current year data exists
-                        if row["Year"] == current_year:
-                            return "Current"
-                        # Only previous year / others
-                        return "Previous"
-
-                    top10_melt["Status"] = top10_melt.apply(classify_status, axis=1)
-
-                    color_map = {
-                        "Achieved": "green",
-                        "Not Achieved": "red",
-                        "Previous": "gray",
-                        "Current": "blue",
-                    }
-
-                    fig_top10 = px.bar(
-                        top10_melt,
-                        x="PY Name 1",
-                        y="Sales",
-                        color="Status",
-                        color_discrete_map=color_map,
-                        barmode="group",
-                        text=top10_melt["Sales"].apply(lambda x: f"{x:,.0f}"),
-                    )
-                    fig_top10.update_traces(
-                        textposition="inside",
-                        insidetextanchor="middle",
-                        textfont=dict(color="white", size=12),
-                    )
-                    fig_top10.update_layout(
-                        title=f"Top 10 Customers: {last_year} vs {current_year}",
-                        xaxis_title="Customer",
-                        yaxis_title="Sales (KD)",
-                        font=dict(family="Roboto", size=12),
-                        plot_bgcolor="#F3F4F6",
-                        paper_bgcolor="#F3F4F6",
-                    )
-                    st.plotly_chart(fig_top10, use_container_width=True)
-
-            # --- Return by SP Name1 + Material Description (YTD) ---
-            st.subheader("🔄 Return By Branch + Material Description (YTD)")
-            required_cols = {"SP Name1", "Material Description", "Billing Type", "Net Value"}
-            if required_cols.issubset(ytd_df.columns):
-                sp_mat_ytd = pd.pivot_table(
-                    ytd_df,
-                    index=["SP Name1", "Material Description"],
-                    columns="Billing Type",
-                    values="Net Value",
-                    aggfunc="sum",
-                    fill_value=0
+                summary_p1 = (
+                    df_p1.groupby(dimension)["Net Value"]
+                    .sum()
+                    .reset_index()
+                    .rename(columns={"Net Value": col_p1_name})
                 )
-                billing_cols = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
-                for col in billing_cols:
-                    if col not in sp_mat_ytd.columns:
-                        sp_mat_ytd[col] = 0
-                sp_mat_ytd = sp_mat_ytd.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
-                sp_mat_ytd["Sales Total"] = sp_mat_ytd.sum(axis=1, numeric_only=True)
-                sp_mat_ytd["Return"] = sp_mat_ytd["YKRE"] + sp_mat_ytd["ZRE"]
-                sp_mat_ytd["Cancel Total"] = sp_mat_ytd[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
-                sp_mat_ytd["Return %"] = np.where(sp_mat_ytd["Sales Total"] != 0,
-                                                  (sp_mat_ytd["Return"] / sp_mat_ytd["Sales Total"] * 100).round(0), 0)
-                ordered_cols = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
-                                "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
-                sp_mat_ytd = sp_mat_ytd.reindex(columns=ordered_cols, fill_value=0)
-                total_row = pd.DataFrame(sp_mat_ytd.sum(numeric_only=True)).T
-                total_row.index = [("Total", "")]
-                total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100), 0) if total_row["Sales Total"].iloc[0] != 0 else 0
-                sp_mat_ytd = pd.concat([sp_mat_ytd, total_row])
+                summary_p2 = (
+                    df_p2.groupby(dimension)["Net Value"]
+                    .sum()
+                    .reset_index()
+                    .rename(columns={"Net Value": col_p2_name})
+                )
 
-                # Conditional highlights for easy read
-                def highlight_sp_mat(row):
-                    styles = []
-                    for col in row.index:
-                        if row.name == ("Total", ""):
-                            styles.append('background-color: #BFDBFE; color: #1E3A8A; font-weight: 900')
-                        elif col == "Return" and row[col] > 0:
-                            styles.append('background-color: #FECACA; color: #991B1B; font-weight: 700')
-                        elif col == "Cancel Total" and row[col] > 0:
-                            styles.append('background-color: #FDE68A; color: #92400E; font-weight: 700')
-                        elif col == "Sales Total" and row[col] > 0:
-                            styles.append('background-color: #D1FAE5; color: #065F46; font-weight: 700')
-                        else:
-                            styles.append('')
-                    return styles
+                ytd_comparison = pd.merge(summary_p1, summary_p2, on=dimension, how="outer")
 
-                styled_sp_mat = (
-                    sp_mat_ytd.style
+                # 🔒 Safety: ensure both period columns exist (avoid KeyError)
+                if col_p1_name not in ytd_comparison.columns:
+                    ytd_comparison[col_p1_name] = 0
+                if col_p2_name not in ytd_comparison.columns:
+                    ytd_comparison[col_p2_name] = 0
+
+                ytd_comparison = ytd_comparison.fillna(0)
+
+                # Difference = Period2 - Period1
+                ytd_comparison["Difference"] = ytd_comparison[col_p2_name] - ytd_comparison[col_p1_name]
+
+                # Rename dimension column to generic "Name"
+                ytd_comparison.rename(columns={dimension: "Name"}, inplace=True)
+
+                # Total row
+                total_row = {
+                    "Name": "Total",
+                    col_p1_name: ytd_comparison[col_p1_name].sum(),
+                    col_p2_name: ytd_comparison[col_p2_name].sum(),
+                    "Difference": ytd_comparison["Difference"].sum()
+                }
+                ytd_comparison = pd.concat(
+                    [ytd_comparison, pd.DataFrame([total_row])],
+                    ignore_index=True
+                )
+
+                # Use friendly label in the heading
+                st.subheader(f"📋 Comparison by {dim_label}")
+
+                styled_ytd = (
+                    ytd_comparison.style
                     .set_table_styles([
-                        {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
-                                                    ('font-weight', '800'), ('height', '40px'),
-                                                    ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
+                        {
+                            'selector': 'th',
+                            'props': [
+                                ('background', '#1E3A8A'),
+                                ('color', 'white'),
+                                ('font-weight', '800'),
+                                ('height', '40px'),
+                                ('line-height', '40px'),
+                                ('border', '1px solid #E5E7EB')
+                            ]
+                        }
                     ])
-                    .apply(highlight_sp_mat, axis=1)
-                    .format({
-                        "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
-                        "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
-                        "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
-                    })
+                    .apply(
+                        lambda x: [
+                            'background-color: #BFDBFE; color: #1E3A8A; font-weight: 900'
+                            if x.name == len(x) - 1 else ''  # last row = Total
+                            for _ in x
+                        ],
+                        axis=1
+                    )
+                    .format(
+                        {
+                            col_p1_name: "{:,.0f}",
+                            col_p2_name: "{:,.0f}",
+                            'Difference': "{:,.0f}"
+                        }
+                    )
                 )
-                st.dataframe(styled_sp_mat, use_container_width=True)
+                st.dataframe(styled_ytd, use_container_width=True, hide_index=False)
+
                 st.download_button(
-                    "⬇️ Download Return by SP+Material (YTD)",
-                    data=to_excel_bytes(sp_mat_ytd.reset_index(), sheet_name="Return_by_SP_Material_YTD", index=False),
-                    file_name=f"Return_by_SP_Material_YTD_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                    "⬇️ Download YTD Comparison (Excel)",
+                    data=to_excel_bytes(ytd_comparison, sheet_name="YTD_Comparison", index=False),
+                    file_name=f"YTD_Comparison_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-            else:
-                st.info("Required columns for SP+Material YTD table are missing.")
 
+                # --- NEW: Sales by Month (YTD) ---
+                st.subheader("📈 Sales by Month (YTD)")
+                monthly = ytd_df.copy()
+                monthly["YearMonth"] = monthly["Billing Date"].dt.to_period("M").astype(str)
+
+                monthly_sales = (
+                    monthly.groupby("YearMonth")["Net Value"]
+                    .sum()
+                    .reset_index()
+                    .sort_values("YearMonth")
+                )
+
+                if not monthly_sales.empty:
+                    fig_month = px.bar(
+                        monthly_sales,
+                        x="YearMonth",
+                        y="Net Value",
+                        title="Sales by Month (YTD)",
+                        labels={"YearMonth": "Year-Month", "Net Value": "Net Value (KD)"}
+                    )
+                    fig_month.update_layout(height=400)
+                    st.plotly_chart(fig_month, use_container_width=True)
+                else:
+                    st.info("No monthly data available in YTD sheet.")
+
+                # --- Top 10 Customers: Last Year vs Current Year ---
+                st.subheader("🏆 Top 10 Customers – Last Year vs Current Year")
+
+                # Make sure Billing Date is datetime
+                if not np.issubdtype(ytd_df["Billing Date"].dtype, np.datetime64):
+                    ytd_df["Billing Date"] = pd.to_datetime(ytd_df["Billing Date"], errors="coerce")
+
+                ytd_df["Year"] = ytd_df["Billing Date"].dt.year
+                current_year = pd.Timestamp.today().year
+                last_year = current_year - 1
+
+                # Aggregate sales by Customer + Year
+                cust_sales = (
+                    ytd_df[ytd_df["Year"].isin([last_year, current_year])]
+                    .groupby(["PY Name 1", "Year"])["Net Value"]
+                    .sum()
+                    .reset_index()
+                )
+
+                if cust_sales.empty:
+                    st.info("⚠️ No customer sales found for last year or current year.")
+                else:
+                    cust_pivot = cust_sales.pivot(
+                        index="PY Name 1",
+                        columns="Year",
+                        values="Net Value"
+                    ).fillna(0)
+
+                    # Use only year columns that actually exist (avoid KeyError)
+                    year_cols = [y for y in [last_year, current_year] if y in cust_pivot.columns]
+
+                    if not year_cols:
+                        st.info("⚠️ No valid year columns found to build Top 10 customers chart.")
+                    else:
+                        cust_pivot["Total"] = cust_pivot[year_cols].sum(axis=1)
+                        top10_cust = cust_pivot.sort_values("Total", ascending=False).head(10).reset_index()
+
+                        # Melt for plotting
+                        top10_melt = top10_cust.melt(
+                            id_vars="PY Name 1",
+                            value_vars=year_cols,
+                            var_name="Year",
+                            value_name="Sales",
+                        )
+
+                        # Merge back the wide data for status calculation
+                        merge_cols = ["PY Name 1"] + year_cols
+                        top10_melt = top10_melt.merge(
+                            top10_cust[merge_cols],
+                            on="PY Name 1",
+                            how="left",
+                        )
+
+                        def classify_status(row):
+                            # Both last_year & current_year exist → Achieved vs Not Achieved
+                            if (last_year in year_cols) and (current_year in year_cols) and row["Year"] == current_year:
+                                return "Achieved" if row.get(current_year, 0) >= row.get(last_year, 0) else "Not Achieved"
+                            # Only current year data exists
+                            if row["Year"] == current_year:
+                                return "Current"
+                            # Only previous year / others
+                            return "Previous"
+
+                        top10_melt["Status"] = top10_melt.apply(classify_status, axis=1)
+
+                        color_map = {
+                            "Achieved": "green",
+                            "Not Achieved": "red",
+                            "Previous": "gray",
+                            "Current": "blue",
+                        }
+
+                        fig_top10 = px.bar(
+                            top10_melt,
+                            x="PY Name 1",
+                            y="Sales",
+                            color="Status",
+                            color_discrete_map=color_map,
+                            barmode="group",
+                            text=top10_melt["Sales"].apply(lambda x: f"{x:,.0f}"),
+                        )
+                        fig_top10.update_traces(
+                            textposition="inside",
+                            insidetextanchor="middle",
+                            textfont=dict(color="white", size=12),
+                        )
+                        fig_top10.update_layout(
+                            title=f"Top 10 Customers: {last_year} vs {current_year}",
+                            xaxis_title="Customer",
+                            yaxis_title="Sales (KD)",
+                            font=dict(family="Roboto", size=12),
+                            plot_bgcolor="#F3F4F6",
+                            paper_bgcolor="#F3F4F6",
+                        )
+                        st.plotly_chart(fig_top10, use_container_width=True)
+
+                # --- Return by SP Name1 + Material Description (YTD) ---
+                st.subheader("🔄 Return By Branch + Material Description (YTD)")
+                required_cols = {"SP Name1", "Material Description", "Billing Type", "Net Value"}
+                if required_cols.issubset(ytd_df.columns):
+                    sp_mat_ytd = pd.pivot_table(
+                        ytd_df,
+                        index=["SP Name1", "Material Description"],
+                        columns="Billing Type",
+                        values="Net Value",
+                        aggfunc="sum",
+                        fill_value=0
+                    )
+                    billing_cols = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
+                    for col in billing_cols:
+                        if col not in sp_mat_ytd.columns:
+                            sp_mat_ytd[col] = 0
+                    sp_mat_ytd = sp_mat_ytd.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
+                    sp_mat_ytd["Sales Total"] = sp_mat_ytd.sum(axis=1, numeric_only=True)
+                    sp_mat_ytd["Return"] = sp_mat_ytd["YKRE"] + sp_mat_ytd["ZRE"]
+                    sp_mat_ytd["Cancel Total"] = sp_mat_ytd[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
+                    sp_mat_ytd["Return %"] = np.where(
+                        sp_mat_ytd["Sales Total"] != 0,
+                        (sp_mat_ytd["Return"] / sp_mat_ytd["Sales Total"] * 100).round(0),
+                        0
+                    )
+                    ordered_cols = [
+                        "Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
+                        "Cancel Total", "YKRE", "ZRE", "Return", "Return %"
+                    ]
+                    sp_mat_ytd = sp_mat_ytd.reindex(columns=ordered_cols, fill_value=0)
+                    total_row = pd.DataFrame(sp_mat_ytd.sum(numeric_only=True)).T
+                    total_row.index = [("Total", "")]
+                    total_row["Return %"] = (
+                        round((total_row["Return"] / total_row["Sales Total"] * 100), 0)
+                        if total_row["Sales Total"].iloc[0] != 0 else 0
+                    )
+                    sp_mat_ytd = pd.concat([sp_mat_ytd, total_row])
+
+                    # Conditional highlights for easy read
+                    def highlight_sp_mat(row):
+                        styles = []
+                        for col in row.index:
+                            if row.name == ("Total", ""):
+                                styles.append('background-color: #BFDBFE; color: #1E3A8A; font-weight: 900')
+                            elif col == "Return" and row[col] > 0:
+                                styles.append('background-color: #FECACA; color: #991B1B; font-weight: 700')
+                            elif col == "Cancel Total" and row[col] > 0:
+                                styles.append('background-color: #FDE68A; color: #92400E; font-weight: 700')
+                            elif col == "Sales Total" and row[col] > 0:
+                                styles.append('background-color: #D1FAE5; color: #065F46; font-weight: 700')
+                            else:
+                                styles.append('')
+                        return styles
+
+                    styled_sp_mat = (
+                        sp_mat_ytd.style
+                        .set_table_styles([
+                            {
+                                'selector': 'th',
+                                'props': [
+                                    ('background', '#1E3A8A'),
+                                    ('color', 'white'),
+                                    ('font-weight', '800'),
+                                    ('height', '40px'),
+                                    ('line-height', '40px'),
+                                    ('border', '1px solid #E5E7EB')
+                                ]
+                            }
+                        ])
+                        .apply(highlight_sp_mat, axis=1)
+                        .format({
+                            "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
+                            "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
+                            "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
+                        })
+                    )
+                    st.dataframe(styled_sp_mat, use_container_width=True)
+                    st.download_button(
+                        "⬇️ Download Return by SP+Material (YTD)",
+                        data=to_excel_bytes(sp_mat_ytd.reset_index(), sheet_name="Return_by_SP_Material_YTD", index=False),
+                        file_name=f"Return_by_SP_Material_YTD_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.info("Required columns for SP+Material YTD table are missing.")
     else:
         st.warning("⚠️ Please ensure the 'YTD' sheet is present in your uploaded file.")
-
-
 
 
 # --- Custom Analysis Page ---
