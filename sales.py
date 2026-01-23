@@ -1,3 +1,38 @@
+
+# ================= SAFE SESSION ACCESSORS =================
+def get_price_df():
+    return st.session_state.get("price_df", pd.DataFrame())
+
+
+
+# ================= PROFIT & MARGIN HELPER =================
+def calculate_cost_profit(df, price_df):
+    df = df.copy()
+    price_df = price_df.copy()
+
+    df["_mat_norm"] = df["Material Description"].astype(str).str.strip().str.upper()
+    price_df["_mat_norm"] = price_df["Material Description"].astype(str).str.strip().str.upper()
+
+    price_map = price_df.set_index("_mat_norm")
+
+    df["Cost Price"] = df["_mat_norm"].map(price_map["Cost Price"])
+    df["Pack Size"] = df["_mat_norm"].map(price_map["Pack Size"])
+
+    def _cost(row):
+        if pd.isna(row["Cost Price"]):
+            return None
+        if row["UOM"] == "KAR":
+            return row["Quantity"] * row["Pack Size"] * row["Cost Price"]
+        return row["Quantity"] * row["Cost Price"]
+
+    df["Calculated Cost"] = df.apply(_cost, axis=1)
+    df["Gross Profit"] = df["Net Value"] - df["Calculated Cost"]
+    df["Margin %"] = (df["Gross Profit"] / df["Net Value"]) * 100
+    df["⚠ Cost Missing"] = df["Cost Price"].isna()
+
+    return df
+
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -900,22 +935,50 @@ def create_progress_bar_html(percentage):
 
 # --- SINGLE SIDEBAR UPLOADER ---
 st.sidebar.header(texts[lang]["upload_header"])
-st.sidebar.markdown(f'<div class="tooltip">ℹ️<span class="tooltiptext">{texts[lang]["upload_tooltip"]}</span></div>', unsafe_allow_html=True)
+st.sidebar.markdown(
+    f'<div class="tooltip">ℹ️<span class="tooltiptext">{texts[lang]["upload_tooltip"]}</span></div>',
+    unsafe_allow_html=True
+)
+
 uploaded = st.sidebar.file_uploader("", type=["xlsx"], key="single_upload")
+
 if st.sidebar.button(texts[lang]["clear_data"]):
-    for k in ["sales_df", "target_df", "ytd_df", "channels_df", "data_loaded"]:
+    for k in [
+        "sales_df", "target_df", "ytd_df", "channels_df",
+        "price_df", "data_loaded", "audit_log"
+    ]:
         if k in st.session_state:
             del st.session_state[k]
     st.experimental_rerun()
 
+
+# ================= PRICE LIST (FOR PROFIT & MARGIN) =================
+# IMPORTANT: keep in session_state (prevents NameError on reruns)
+if "price_df" not in st.session_state:
+    st.session_state["price_df"] = pd.DataFrame()
+
+if uploaded is not None:
+    try:
+        xls = pd.ExcelFile(uploaded)
+        if "price list" in xls.sheet_names:
+            st.session_state["price_df"] = pd.read_excel(
+                xls, sheet_name="price list"
+            )
+    except Exception:
+        st.session_state["price_df"] = pd.DataFrame()
+
+
+# ================= LOAD MAIN DATA (ONCE) =================
 if uploaded is not None and "data_loaded" not in st.session_state:
     sales_df, target_df, ytd_df, channels_df = load_data(uploaded)
+
     st.session_state["sales_df"] = sales_df
     st.session_state["target_df"] = target_df
     st.session_state["ytd_df"] = ytd_df
     st.session_state["channels_df"] = channels_df
     st.session_state["data_loaded"] = True
     st.session_state["audit_log"] = []  # Initialize audit log
+
     st.success(texts[lang]["file_loaded"])
 
     # Log upload action
@@ -938,8 +1001,10 @@ menu = [
     texts[lang]["ai_insights"],
     texts[lang]["customer_insights"],
     texts[lang]["material_forecast"],
+    "💰 Profit & Margin",          # 👈 ADD THIS
     "🧭 Management Command Center"
 ]
+
 
 choice = st.sidebar.selectbox(texts[lang]["navigate"], menu)
 # Role-based filtering for data
@@ -5183,7 +5248,304 @@ elif choice == texts[lang]["material_forecast"]:
                 "timestamp": datetime.now().isoformat()
             })
                       
-# --- Management Command Center   ---
+
+# ================= PROFIT & MARGIN PAGE =================
+elif choice == "💰 Profit & Margin":
+    st.title("💰 Profit & Margin Analysis")
+
+    # Helper function to find columns (Quantity, UOM, Net Value, Cost Price, Pack Size)
+    def find_column(df, possible_names):
+        for col in df.columns:
+            clean_col = str(col).lower().replace(" ", "").replace("_", "").replace("-", "")
+            for name in possible_names:
+                if name.lower().replace(" ", "") in clean_col:
+                    return col
+        return None
+
+    # ─── Price list status ─────────────────────────────────────────────────
+    price_df = st.session_state.get("price_df", pd.DataFrame())
+    if price_df.empty:
+        st.info("Price list sheet ('price list' or similar) not found → cost & discount will show as missing.")
+    else:
+        st.success(f"Price list loaded ({len(price_df):,} rows)")
+        with st.expander("Price List Preview (first 8 rows)", expanded=False):
+            st.dataframe(price_df.head(8))
+
+    # ─── Data source selection ─────────────────────────────────────────────
+    data_source = st.radio(
+        "Analyze which data?",
+        ["Current Month only (sales data sheet)", "Full Year / Historical (YTD sheet)"],
+        index=0
+    )
+
+    if data_source == "Current Month only (sales data sheet)":
+        if "sales_df" not in st.session_state or st.session_state["sales_df"].empty:
+            st.warning("No current month sales data loaded.")
+            st.stop()
+        base_df = st.session_state["sales_df"].copy()
+    else:
+        if "ytd_df" not in st.session_state or st.session_state["ytd_df"].empty:
+            st.warning("No YTD data loaded → falling back to current month sales.")
+            if "sales_df" not in st.session_state or st.session_state["sales_df"].empty:
+                st.stop()
+            base_df = st.session_state["sales_df"].copy()
+        else:
+            base_df = st.session_state["ytd_df"].copy()
+
+    # ─── Force using ONLY "Material Description" for matching ───────────────
+    def find_material_description(df):
+        preferred = [
+            "Material Description", "Mat Description", "Material Desc",
+            "Description", "Item Description", "Product Description"
+        ]
+        for col in df.columns:
+            col_lower = str(col).strip().lower()
+            for p in preferred:
+                if p.lower() in col_lower:
+                    return col
+        for col in df.columns:
+            if "desc" in str(col).lower():
+                return col
+        return None
+
+    MATERIAL_COL = find_material_description(base_df)
+    PRICE_MAT_COL = find_material_description(price_df)
+
+    qty_col = find_column(base_df, ["Quantity", "Qty", "Sales Qty"])
+    uom_col = find_column(base_df, ["UOM", "Unit", "Unit of Measure"])
+    net_col = find_column(base_df, ["Net Value", "Net Amount", "Net Sales"])
+
+    cost_col = find_column(price_df, ["Cost Price", "Cost", "Unit Cost"])
+    pack_col = find_column(price_df, ["Pack Size", "Pack"])
+
+    missing = []
+    if MATERIAL_COL is None: missing.append("Material Description (Sales/YTD)")
+    if qty_col is None: missing.append("Quantity (Sales/YTD)")
+    if net_col is None: missing.append("Net Value (Sales/YTD)")
+    if not price_df.empty:
+        if PRICE_MAT_COL is None: missing.append("Material Description (Price List)")
+        if cost_col is None: missing.append("Cost Price (Price List)")
+
+    if missing:
+        st.error("Cannot calculate Profit & Margin – missing columns:\n• " + "\n• ".join(missing))
+        st.stop()
+
+    # ─── Date range selection ──────────────────────────────────────────────
+    col1, col2 = st.columns(2)
+    with col1:
+        min_date = base_df["Billing Date"].min().date()
+        start_date = st.date_input("Start Date", value=min_date)
+    with col2:
+        max_date = base_df["Billing Date"].max().date()
+        end_date = st.date_input("End Date", value=max_date)
+
+    start_dt = pd.to_datetime(start_date)
+    end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1)
+
+    df_pm = base_df[
+        (base_df["Billing Date"] >= start_dt) &
+        (base_df["Billing Date"] < end_dt)
+    ].copy()
+
+    if df_pm.empty:
+        st.warning("No records found for selected filters.")
+        st.stop()
+
+    # ─── Price Mapping ─────────────────────────────────────────────────────
+    df_val = df_pm.copy()
+    df_val["_mat_norm"] = df_val[MATERIAL_COL].astype(str).str.strip().str.upper()
+
+    df_val["Cost Price"] = pd.NA
+    df_val["Pack Size"] = pd.NA
+
+    if not price_df.empty:
+        price_df["_mat_norm"] = price_df[PRICE_MAT_COL].astype(str).str.strip().str.upper()
+        price_map = price_df.set_index("_mat_norm")
+
+        df_val["Cost Price"] = df_val["_mat_norm"].map(price_map[cost_col])
+        if pack_col:
+            df_val["Pack Size"] = df_val["_mat_norm"].map(price_map[pack_col])
+            
+     # ─────────────────────────────────────────────────────────
+    # 📌 CATEGORY MAPPING FROM PRICE LIST (MATERIAL LEVEL)
+    # ─────────────────────────────────────────────────────────
+
+    # Find Category column in price list
+    category_col = find_column(
+        price_df,
+        ["Category", "Sales Category", "Exchange Category"]
+    )
+
+    # Default
+    df_val["Category"] = pd.NA
+
+    if not price_df.empty and PRICE_MAT_COL and category_col:
+        price_df["_cat_norm"] = price_df[PRICE_MAT_COL].astype(str).str.strip().str.upper()
+
+        category_map = (
+            price_df
+            .set_index("_cat_norm")[category_col]
+        )
+
+        df_val["Category"] = df_val["_mat_norm"].map(category_map)
+       
+
+    # ─── Cost Calculation ──────────────────────────────────────────────────
+    def _cost(row):
+        if pd.isna(row["Cost Price"]):
+            return None
+        qty = pd.to_numeric(row[qty_col], errors="coerce")
+        cost = pd.to_numeric(row["Cost Price"], errors="coerce")
+        uom = str(row[uom_col]).upper()
+        pack = pd.to_numeric(row["Pack Size"], errors="coerce")
+
+        if uom == "KAR":
+            if pd.isna(pack) or pack <= 0:
+                return None
+            return qty * pack * cost
+        return qty * cost
+
+    df_val["Total Cost"] = df_val.apply(_cost, axis=1)
+    df_val["Discount Value"] = pd.to_numeric(df_val[net_col], errors="coerce") - df_val["Total Cost"]
+
+    net_safe = pd.to_numeric(df_val[net_col], errors="coerce").replace(0, np.nan)
+    df_val["Discount %"] = ((df_val["Discount Value"] / net_safe) * 100).fillna(0).round(2)
+    # ─── SAFETY: Ensure warning columns always exist ─────────────────────────
+    if "⚠ Cost Missing" not in df_val.columns:
+        df_val["⚠ Cost Missing"] = df_val["Cost Price"].isna()
+
+    if "⚠ Pack Missing (KAR)" not in df_val.columns:
+        if uom_col in df_val.columns:
+            df_val["⚠ Pack Missing (KAR)"] = (
+                df_val[uom_col].astype(str).str.upper() == "KAR"
+            ) & df_val["Pack Size"].isna()
+        else:
+            df_val["⚠ Pack Missing (KAR)"] = False
+
+
+    df_val["⚠ Cost Missing"] = df_val["Cost Price"].isna()
+    df_val["⚠ Pack Missing (KAR)"]
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # 📌 EXECUTIVE SUMMARY
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown("## 📌 Profit & Margin – Executive Summary")
+
+    total_net = pd.to_numeric(df_val[net_col], errors="coerce").sum()
+    total_cost = pd.to_numeric(df_val["Total Cost"], errors="coerce").sum()
+    total_discount_value = pd.to_numeric(df_val["Discount Value"], errors="coerce").sum()
+
+    overall_discount_pct = (total_discount_value / total_net * 100) if total_net else 0
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Total Net Value", f"{total_net:,.2f}")
+    k2.metric("Total Cost", f"{total_cost:,.2f}")
+    k3.metric("Discount Value", f"{total_discount_value:,.2f}")
+    k4.metric("Discount %", f"{overall_discount_pct:.2f}%")
+    k5.metric("Cost Missing Rows", int(df_val["⚠ Cost Missing"].sum()))
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 🧪 DATA QUALITY SNAPSHOT
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown("### 🧪 Data Quality Check")
+
+    dq1, dq2, dq3 = st.columns(3)
+    dq1.metric("Cost Mapping %", f"{100 - (df_val['⚠ Cost Missing'].mean() * 100):.1f}%")
+    dq2.metric("KAR Pack Mapping %", f"{100 - (df_val['⚠ Pack Missing (KAR)'].mean() * 100):.1f}%")
+    dq3.metric("Negative Discount Rows", int((df_val["Discount Value"] < 0).sum()))
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 🔍 MATERIAL HOTSPOTS
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown("### 🔍 Discount Hotspots (Material Level)")
+
+    material_summary = (
+        df_val
+        .groupby(MATERIAL_COL, dropna=True)
+        .agg(
+            Net_Value=(net_col, "sum"),
+            Discount_Value=("Discount Value", "sum"),
+            Avg_Discount_Pct=("Discount %", "mean")
+        )
+        .reset_index()
+    )
+
+    cA, cB = st.columns(2)
+    with cA:
+        st.caption("🔴 Top 10 Loss Making Materials")
+        st.dataframe(
+            material_summary.sort_values("Discount_Value").head(10),
+            use_container_width=True,
+            hide_index=True
+        )
+
+    with cB:
+        st.caption("🟢 Top 10 Profitable Materials")
+        st.dataframe(
+            material_summary.sort_values("Discount_Value", ascending=False).head(10),
+            use_container_width=True,
+            hide_index=True
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 🎯 QUICK VIEWS (FILTERS)
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown("### 🎯 Quick Views")
+
+    f1, f2, f3 = st.columns(3)
+    show_negative = f1.checkbox("Show Only Negative Discount", key="pm_neg")
+    show_cost_missing = f2.checkbox("Show Only Cost Missing", key="pm_cost")
+    show_kar_pack = f3.checkbox("Show Only KAR Pack Issues", key="pm_kar")
+
+    display_df = df_val.copy()
+    if show_negative:
+        display_df = display_df[display_df["Discount Value"] < 0]
+    if show_cost_missing:
+        display_df = display_df[display_df["⚠ Cost Missing"]]
+    if show_kar_pack:
+        display_df = display_df[display_df["⚠ Pack Missing (KAR)"]]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 📊 FINAL TABLE
+    # ─────────────────────────────────────────────────────────────────────────
+    st.subheader(f"Result: {len(display_df):,} rows ({start_date} → {end_date})")
+
+    st.dataframe(
+        display_df[
+            [
+                "Billing Date", "Driver Name EN", "PY Name 1",
+                MATERIAL_COL, qty_col, uom_col,
+                "Cost Price", "Pack Size", "Total Cost",
+                net_col, "Discount Value", "Discount %",
+                "⚠ Cost Missing", "⚠ Pack Missing (KAR)"
+            ]
+        ],
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ⬇️ DOWNLOADS
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown("### ⬇️ Download Full Result")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        csv = display_df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "⬇️ CSV",
+            csv,
+            f"profit_margin_{start_date}_to_{end_date}.csv"
+        )
+
+    with c2:
+        st.download_button(
+            "⬇️ Excel",
+            data=to_excel_bytes(display_df),
+            file_name=f"profit_margin_{start_date}_to_{end_date}.xlsx"
+        )
+
+                
 elif choice == "🧭 Management Command Center":
     st.title("🧭 Management Command Center")
 
