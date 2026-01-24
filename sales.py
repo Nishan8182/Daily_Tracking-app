@@ -5253,19 +5253,21 @@ elif choice == texts[lang]["material_forecast"]:
 elif choice == "💰 Profit & Margin":
     st.title("💰 Profit & Margin Analysis")
 
-    # Helper function to find columns (Quantity, UOM, Net Value, Cost Price, Pack Size)
+    # ─── Helper: fuzzy column finder ──────────────────────────────────────
     def find_column(df, possible_names):
+        if df.empty:
+            return None
+        possible = [str(n).lower().replace(" ", "").replace("_", "") for n in possible_names]
         for col in df.columns:
-            clean_col = str(col).lower().replace(" ", "").replace("_", "").replace("-", "")
-            for name in possible_names:
-                if name.lower().replace(" ", "") in clean_col:
-                    return col
+            clean = str(col).lower().replace(" ", "").replace("_", "")
+            if clean in possible or any(p in clean for p in possible):
+                return col
         return None
 
     # ─── Price list status ─────────────────────────────────────────────────
     price_df = st.session_state.get("price_df", pd.DataFrame())
     if price_df.empty:
-        st.info("Price list sheet ('price list' or similar) not found → cost & discount will show as missing.")
+        st.info("Price list sheet ('price list') not found → cost & discount will show as missing.")
     else:
         st.success(f"Price list loaded ({len(price_df):,} rows)")
         with st.expander("Price List Preview (first 8 rows)", expanded=False):
@@ -5285,62 +5287,51 @@ elif choice == "💰 Profit & Margin":
         base_df = st.session_state["sales_df"].copy()
     else:
         if "ytd_df" not in st.session_state or st.session_state["ytd_df"].empty:
-            st.warning("No YTD data loaded → falling back to current month sales.")
+            st.warning("No YTD data → falling back to current month sales.")
             if "sales_df" not in st.session_state or st.session_state["sales_df"].empty:
                 st.stop()
             base_df = st.session_state["sales_df"].copy()
         else:
             base_df = st.session_state["ytd_df"].copy()
 
-    # ─── Force using ONLY "Material Description" for matching ───────────────
-    def find_material_description(df):
-        preferred = [
-            "Material Description", "Mat Description", "Material Desc",
-            "Description", "Item Description", "Product Description"
-        ]
-        for col in df.columns:
-            col_lower = str(col).strip().lower()
-            for p in preferred:
-                if p.lower() in col_lower:
-                    return col
-        for col in df.columns:
-            if "desc" in str(col).lower():
-                return col
-        return None
+    # ─── Column discovery ──────────────────────────────────────────────────
+    MATERIAL_COL = find_column(base_df, ["Material Description", "Mat Description", "Description", "Item Description"])
+    QTY_COL      = find_column(base_df, ["Quantity", "Qty", "Sales Qty"])
+    UOM_COL      = find_column(base_df, ["UOM", "Unit of Measure", "Unit"])
+    NET_COL      = find_column(base_df, ["Net Value", "Net Amount", "Net Sales", "Amount"])
 
-    MATERIAL_COL = find_material_description(base_df)
-    PRICE_MAT_COL = find_material_description(price_df)
-
-    qty_col = find_column(base_df, ["Quantity", "Qty", "Sales Qty"])
-    uom_col = find_column(base_df, ["UOM", "Unit", "Unit of Measure"])
-    net_col = find_column(base_df, ["Net Value", "Net Amount", "Net Sales"])
-
-    cost_col = find_column(price_df, ["Cost Price", "Cost", "Unit Cost"])
-    pack_col = find_column(price_df, ["Pack Size", "Pack"])
+    PRICE_MAT_COL = find_column(price_df, ["Material Description", "Mat Description", "Description"])
+    COST_COL      = find_column(price_df, ["Cost Price", "Cost", "Unit Cost"])
+    PACK_COL      = find_column(price_df, ["Pack Size", "Pack", "Pack Qty"])
+    CATEGORY_COL  = find_column(price_df, [
+        "Category", "Item Category", "Sales Category", "Material Category",
+        "Type", "Group", "Product Category", "Exchange Category",
+        "Transaction Type", "Doc Type", "Bill Type", "Sale Type", "Doc Category"
+    ])
 
     missing = []
-    if MATERIAL_COL is None: missing.append("Material Description (Sales/YTD)")
-    if qty_col is None: missing.append("Quantity (Sales/YTD)")
-    if net_col is None: missing.append("Net Value (Sales/YTD)")
+    if MATERIAL_COL is None: missing.append("Material Description (main data)")
+    if QTY_COL      is None: missing.append("Quantity")
+    if NET_COL      is None: missing.append("Net Value / Net Amount")
     if not price_df.empty:
-        if PRICE_MAT_COL is None: missing.append("Material Description (Price List)")
-        if cost_col is None: missing.append("Cost Price (Price List)")
+        if PRICE_MAT_COL is None: missing.append("Material Description (price list)")
+        if COST_COL      is None: missing.append("Cost Price")
 
     if missing:
-        st.error("Cannot calculate Profit & Margin – missing columns:\n• " + "\n• ".join(missing))
+        st.error("Cannot calculate Profit & Margin — missing critical columns:\n• " + "\n• ".join(missing))
         st.stop()
 
-    # ─── Date range selection ──────────────────────────────────────────────
+    # ─── Date range filter ─────────────────────────────────────────────────
     col1, col2 = st.columns(2)
     with col1:
-        min_date = base_df["Billing Date"].min().date()
+        min_date = base_df["Billing Date"].min().date() if "Billing Date" in base_df.columns else datetime.date.today()
         start_date = st.date_input("Start Date", value=min_date)
     with col2:
-        max_date = base_df["Billing Date"].max().date()
+        max_date = base_df["Billing Date"].max().date() if "Billing Date" in base_df.columns else datetime.date.today()
         end_date = st.date_input("End Date", value=max_date)
 
     start_dt = pd.to_datetime(start_date)
-    end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1)
+    end_dt   = pd.to_datetime(end_date) + pd.Timedelta(days=1)
 
     df_pm = base_df[
         (base_df["Billing Date"] >= start_dt) &
@@ -5348,56 +5339,36 @@ elif choice == "💰 Profit & Margin":
     ].copy()
 
     if df_pm.empty:
-        st.warning("No records found for selected filters.")
+        st.warning("No records found in selected date range.")
         st.stop()
 
-    # ─── Price Mapping ─────────────────────────────────────────────────────
+    # ─── Prepare normalized matching ───────────────────────────────────────
     df_val = df_pm.copy()
     df_val["_mat_norm"] = df_val[MATERIAL_COL].astype(str).str.strip().str.upper()
 
-    df_val["Cost Price"] = pd.NA
-    df_val["Pack Size"] = pd.NA
+    df_val["Cost Price"]  = pd.NA
+    df_val["Pack Size"]   = pd.NA
+    df_val["Category"]    = pd.NA
 
-    if not price_df.empty:
+    # ─── Price list mapping ────────────────────────────────────────────────
+    if not price_df.empty and PRICE_MAT_COL:
         price_df["_mat_norm"] = price_df[PRICE_MAT_COL].astype(str).str.strip().str.upper()
         price_map = price_df.set_index("_mat_norm")
 
-        df_val["Cost Price"] = df_val["_mat_norm"].map(price_map[cost_col])
-        if pack_col:
-            df_val["Pack Size"] = df_val["_mat_norm"].map(price_map[pack_col])
-            
-     # ─────────────────────────────────────────────────────────
-    # 📌 CATEGORY MAPPING FROM PRICE LIST (MATERIAL LEVEL)
-    # ─────────────────────────────────────────────────────────
+        df_val["Cost Price"] = df_val["_mat_norm"].map(price_map.get(COST_COL))
+        if PACK_COL:
+            df_val["Pack Size"] = df_val["_mat_norm"].map(price_map.get(PACK_COL))
+        if CATEGORY_COL:
+            df_val["Category"] = df_val["_mat_norm"].map(price_map.get(CATEGORY_COL))
 
-    # Find Category column in price list
-    category_col = find_column(
-        price_df,
-        ["Category", "Sales Category", "Exchange Category"]
-    )
-
-    # Default
-    df_val["Category"] = pd.NA
-
-    if not price_df.empty and PRICE_MAT_COL and category_col:
-        price_df["_cat_norm"] = price_df[PRICE_MAT_COL].astype(str).str.strip().str.upper()
-
-        category_map = (
-            price_df
-            .set_index("_cat_norm")[category_col]
-        )
-
-        df_val["Category"] = df_val["_mat_norm"].map(category_map)
-       
-
-    # ─── Cost Calculation ──────────────────────────────────────────────────
-    def _cost(row):
+    # ─── Cost calculation ──────────────────────────────────────────────────
+    def calculate_line_cost(row):
         if pd.isna(row["Cost Price"]):
             return None
-        qty = pd.to_numeric(row[qty_col], errors="coerce")
-        cost = pd.to_numeric(row["Cost Price"], errors="coerce")
-        uom = str(row[uom_col]).upper()
-        pack = pd.to_numeric(row["Pack Size"], errors="coerce")
+        qty   = pd.to_numeric(row.get(QTY_COL), errors='coerce') or 0
+        cost  = pd.to_numeric(row["Cost Price"], errors='coerce')
+        uom   = str(row.get(UOM_COL, "")).strip().upper()
+        pack  = pd.to_numeric(row.get("Pack Size"), errors='coerce')
 
         if uom == "KAR":
             if pd.isna(pack) or pack <= 0:
@@ -5405,147 +5376,352 @@ elif choice == "💰 Profit & Margin":
             return qty * pack * cost
         return qty * cost
 
-    df_val["Total Cost"] = df_val.apply(_cost, axis=1)
-    df_val["Discount Value"] = pd.to_numeric(df_val[net_col], errors="coerce") - df_val["Total Cost"]
+    df_val["Total Cost"] = df_val.apply(calculate_line_cost, axis=1)
 
-    net_safe = pd.to_numeric(df_val[net_col], errors="coerce").replace(0, np.nan)
-    df_val["Discount %"] = ((df_val["Discount Value"] / net_safe) * 100).fillna(0).round(2)
-    # ─── SAFETY: Ensure warning columns always exist ─────────────────────────
-    if "⚠ Cost Missing" not in df_val.columns:
-        df_val["⚠ Cost Missing"] = df_val["Cost Price"].isna()
-
-    if "⚠ Pack Missing (KAR)" not in df_val.columns:
-        if uom_col in df_val.columns:
-            df_val["⚠ Pack Missing (KAR)"] = (
-                df_val[uom_col].astype(str).str.upper() == "KAR"
-            ) & df_val["Pack Size"].isna()
-        else:
-            df_val["⚠ Pack Missing (KAR)"] = False
-
+    # ─── Discount calculation ──────────────────────────────────────────────
+    df_val[NET_COL] = pd.to_numeric(df_val[NET_COL], errors='coerce').fillna(0)
+    df_val["Discount Value"] = df_val[NET_COL] - df_val["Total Cost"].fillna(0)
+    net_safe = df_val[NET_COL].replace(0, np.nan)
+    df_val["Discount %"] = (df_val["Discount Value"] / net_safe * 100).fillna(0).round(2)
 
     df_val["⚠ Cost Missing"] = df_val["Cost Price"].isna()
-    df_val["⚠ Pack Missing (KAR)"]
+
+    if UOM_COL in df_val.columns:
+        df_val["⚠ Pack Missing (KAR)"] = (
+            df_val[UOM_COL].astype(str).str.upper() == "KAR"
+        ) & df_val["Pack Size"].isna()
+    else:
+        df_val["⚠ Pack Missing (KAR)"] = False
+
+    # ─── Category logic ────────────────────────────────────────────────────
+    sales_category_value  = 0.0
+    return_category_value = 0.0
+
+    has_category = "Category" in df_val.columns and df_val["Category"].notna().any()
+
+    if has_category:
+        cat_clean = df_val["Category"].astype(str).str.lower().str.strip()
+        pos_mask = cat_clean.str.contains(
+            r"sale|revenue|positive|income|normal|inv|bill|pos|good|regular",
+            na=False, regex=True
+        )
+        ret_mask = cat_clean.str.contains(
+            r"return|ret|refund|negative|adjustment|cr|debit|reverse|cancel|cn|zre|ykre|credit|deduction",
+            na=False, regex=True
+        )
+        sales_category_value  = df_val[pos_mask][NET_COL].sum()
+        return_category_value = df_val[ret_mask][NET_COL].sum()
+    else:
+        sales_category_value  = df_val[df_val[NET_COL] >= 0][NET_COL].sum()
+        return_category_value = df_val[df_val[NET_COL] <  0][NET_COL].sum()
+
+    # ─── Executive KPIs ────────────────────────────────────────────────────
+    st.markdown("## 📌 Executive Summary")
+
+    total_net      = df_val[NET_COL].sum()
+    total_cost     = df_val["Total Cost"].sum(min_count=1)
+    total_discount = df_val["Discount Value"].sum(min_count=1)
+    overall_disc_pct = (total_discount / total_net * 100) if total_net != 0 else 0
+
+    cols = st.columns(7)
+    cols[0].metric("Total Net",           f"{total_net:,.2f}")
+    cols[1].metric("Total Cost",          f"{total_cost:,.2f}")
+    cols[2].metric("Discount Value",      f"{total_discount:,.2f}")
+    cols[3].metric("Discount %",          f"{overall_disc_pct:.2f}%")
+    cols[4].metric("Cost Missing Rows",   f"{df_val['⚠ Cost Missing'].sum():,}")
+    cols[5].metric("Positive / Sales Val", f"{sales_category_value:,.2f}")
+    cols[6].metric("Returns / Negative",   f"{return_category_value:,.2f}")
+  
     
-    # ─────────────────────────────────────────────────────────────────────────
-    # 📌 EXECUTIVE SUMMARY
-    # ─────────────────────────────────────────────────────────────────────────
-    st.markdown("## 📌 Profit & Margin – Executive Summary")
+    # ============================================================
+    # 📊 EXECUTIVE SUMMARY – CATEGORY PERFORMANCE (FINAL)
+    # ============================================================
 
-    total_net = pd.to_numeric(df_val[net_col], errors="coerce").sum()
-    total_cost = pd.to_numeric(df_val["Total Cost"], errors="coerce").sum()
-    total_discount_value = pd.to_numeric(df_val["Discount Value"], errors="coerce").sum()
+    st.markdown("## 📊 Executive Summary – Category Performance")
 
-    overall_discount_pct = (total_discount_value / total_net * 100) if total_net else 0
+    if "Category" not in df_val.columns or df_val["Category"].isna().all():
+        st.warning("⚠️ Category not mapped — check price list material matching")
+    else:
+        # ─── Net Value by Category / Type (SINGLE SOURCE) ───
+        category_summary = (
+            df_val
+            .groupby("Category", dropna=False)[NET_COL]
+            .sum()
+            .reset_index()
+            .rename(columns={NET_COL: "Net Value"})
+            .sort_values("Net Value", ascending=False)
+        )
 
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Total Net Value", f"{total_net:,.2f}")
-    k2.metric("Total Cost", f"{total_cost:,.2f}")
-    k3.metric("Discount Value", f"{total_discount_value:,.2f}")
-    k4.metric("Discount %", f"{overall_discount_pct:.2f}%")
-    k5.metric("Cost Missing Rows", int(df_val["⚠ Cost Missing"].sum()))
+        # ─── KPI PER CATEGORY (ONE KPI = ONE CATEGORY) ───
+        st.markdown("### 🧾 Category-wise Net Value")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # 🧪 DATA QUALITY SNAPSHOT
-    # ─────────────────────────────────────────────────────────────────────────
-    st.markdown("### 🧪 Data Quality Check")
+        kpi_per_row = 4  # adjust: 3 or 5 if you want
+        data = category_summary.to_dict("records")
 
+        for i in range(0, len(data), kpi_per_row):
+            cols = st.columns(len(data[i:i + kpi_per_row]))
+            for col, row in zip(cols, data[i:i + kpi_per_row]):
+                with col:
+                    st.metric(
+                        label=str(row["Category"]),
+                        value=f"KD {row['Net Value']:,.0f}"
+                    )
+        # ============================================================
+        # 📊 Category Contribution % (One-line insight)
+        # ============================================================
+
+        st.markdown("### 📌 Category Contribution")
+
+        category_contribution = (
+            df_val
+            .groupby("Category", dropna=False)[NET_COL]
+            .sum()
+            .reset_index()
+            .rename(columns={NET_COL: "Net Value"})
+        )
+
+        total_net_value = category_contribution["Net Value"].sum()
+
+        category_contribution["Contribution %"] = (
+            category_contribution["Net Value"] / total_net_value * 100
+        ).round(1)
+
+        # one-line insights
+        insight_lines = [
+            f"• **{row['Category']}** → {row['Contribution %']}%"
+            for _, row in category_contribution
+                .sort_values("Contribution %", ascending=False)
+                .iterrows()
+        ]
+
+        st.markdown("  \n".join(insight_lines))
+            
+
+        # # ─── ONLY TABLE YOU KEEP ───
+        # st.markdown("### 📊 Net Value by Category / Type")
+
+        # st.dataframe(
+        #     category_summary,
+        #     use_container_width=True,
+        #     hide_index=True
+        # )
+
+    # # ─── Debug: category mapping result ────────────────────────────────────
+    # if "Category" in df_val.columns:
+    #     st.caption("DEBUG — Top 12 values in 'Category' column after mapping")
+    #     st.write(df_val["Category"].value_counts(dropna=False).head(12))
+    #     if df_val["Category"].isna().mean() > 0.85:
+    #         st.warning("→ Most rows have no category → material codes probably don't match between files")
+    # else:
+    #     st.info("No category column was created from price list")
+
+    # ─── Data Quality ──────────────────────────────────────────────────────
+    st.markdown("### 🧪 Data Quality")
     dq1, dq2, dq3 = st.columns(3)
-    dq1.metric("Cost Mapping %", f"{100 - (df_val['⚠ Cost Missing'].mean() * 100):.1f}%")
-    dq2.metric("KAR Pack Mapping %", f"{100 - (df_val['⚠ Pack Missing (KAR)'].mean() * 100):.1f}%")
+    dq1.metric("Cost Mapped %", f"{100 - df_val['⚠ Cost Missing'].mean()*100:.1f}%")
+    dq2.metric("KAR Pack Mapped %", f"{100 - df_val.get('⚠ Pack Missing (KAR)', pd.Series(0)).mean()*100:.1f}%")
     dq3.metric("Negative Discount Rows", int((df_val["Discount Value"] < 0).sum()))
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # 🔍 MATERIAL HOTSPOTS
-    # ─────────────────────────────────────────────────────────────────────────
-    st.markdown("### 🔍 Discount Hotspots (Material Level)")
+    # ─── Material level summary ────────────────────────────────────────────
+    st.markdown("### 🔍 Material Discount Hotspots")
 
-    material_summary = (
-        df_val
-        .groupby(MATERIAL_COL, dropna=True)
-        .agg(
-            Net_Value=(net_col, "sum"),
-            Discount_Value=("Discount Value", "sum"),
-            Avg_Discount_Pct=("Discount %", "mean")
-        )
-        .reset_index()
-    )
+    agg_dict = {}
+    if NET_COL in df_val.columns:
+        agg_dict["Net_Value"] = (NET_COL, "sum")
+    if "Discount %" in df_val.columns:
+        agg_dict["Avg_Discount_Pct"] = ("Discount %", "mean")
+    if "Discount Value" in df_val.columns:
+        agg_dict["Discount_Value"] = ("Discount Value", "sum")
+    if "Total Cost" in df_val.columns:
+        agg_dict["Total_Cost"] = ("Total Cost", "sum")
 
-    cA, cB = st.columns(2)
-    with cA:
-        st.caption("🔴 Top 10 Loss Making Materials")
-        st.dataframe(
-            material_summary.sort_values("Discount_Value").head(10),
-            use_container_width=True,
-            hide_index=True
+    if agg_dict:
+        material_summary = (
+            df_val.groupby(MATERIAL_COL, dropna=True)
+                  .agg(**agg_dict)
+                  .reset_index()
         )
 
-    with cB:
-        st.caption("🟢 Top 10 Profitable Materials")
-        st.dataframe(
-            material_summary.sort_values("Discount_Value", ascending=False).head(10),
-            use_container_width=True,
-            hide_index=True
-        )
+        if "Discount_Value" in material_summary.columns:
+            cA, cB = st.columns(2)
+            with cA:
+                st.caption("🔴 Top biggest discount / loss makers")
+                st.dataframe(
+                    material_summary.sort_values("Discount_Value").head(12),
+                    use_container_width=True
+                )
+            with cB:
+                st.caption("🟢 Top most profitable (lowest discount)")
+                st.dataframe(
+                    material_summary.sort_values("Discount_Value", ascending=False).head(12),
+                    use_container_width=True
+                )
+        else:
+            st.dataframe(material_summary, use_container_width=True)
+    else:
+        st.info("No numeric columns available for material summary.")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # 🎯 QUICK VIEWS (FILTERS)
-    # ─────────────────────────────────────────────────────────────────────────
-    st.markdown("### 🎯 Quick Views")
+    # # ─── Category Breakdown Table ──────────────────────────────────────────
+    # st.markdown("### 📊 Net Value by Category / Type")
 
+    # if has_category:
+    #     cat_summary = (
+    #         df_val.groupby("Category", dropna=False)[NET_COL]
+    #               .agg(["sum", "count"])
+    #               .rename(columns={"sum": "Net Value", "count": "Transactions"})
+    #               .reset_index()
+    #     )
+    #     cat_summary["Net Value"] = cat_summary["Net Value"].round(2)
+    #     st.dataframe(cat_summary.sort_values("Net Value", ascending=False), use_container_width=True)
+    # else:
+    #     st.info("No category column mapped → showing sign-based split only")
+    #     sign_summary = pd.DataFrame({
+    #         "Type": ["Positive (Sales)", "Negative (Returns)"],
+    #         "Net Value": [sales_category_value, return_category_value],
+    #         "Transactions": [
+    #             len(df_val[df_val[NET_COL] >= 0]),
+    #             len(df_val[df_val[NET_COL] < 0])
+    #         ]
+    #     })
+    #     st.dataframe(sign_summary, use_container_width=True)
+
+    # ─── Quick Filters ─────────────────────────────────────────────────────
+    st.markdown("### 🎯 Quick Filters")
     f1, f2, f3 = st.columns(3)
-    show_negative = f1.checkbox("Show Only Negative Discount", key="pm_neg")
-    show_cost_missing = f2.checkbox("Show Only Cost Missing", key="pm_cost")
-    show_kar_pack = f3.checkbox("Show Only KAR Pack Issues", key="pm_kar")
+    show_negative     = f1.checkbox("Only negative discount", key="pm_neg")
+    show_cost_missing = f2.checkbox("Only cost missing",      key="pm_cost")
+    show_kar_issues   = f3.checkbox("Only KAR pack issues",   key="pm_kar")
 
     display_df = df_val.copy()
     if show_negative:
         display_df = display_df[display_df["Discount Value"] < 0]
     if show_cost_missing:
         display_df = display_df[display_df["⚠ Cost Missing"]]
-    if show_kar_pack:
-        display_df = display_df[display_df["⚠ Pack Missing (KAR)"]]
+    if show_kar_issues:
+        display_df = display_df[display_df.get("⚠ Pack Missing (KAR)", False)]
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # 📊 FINAL TABLE
-    # ─────────────────────────────────────────────────────────────────────────
-    st.subheader(f"Result: {len(display_df):,} rows ({start_date} → {end_date})")
+    # ─── Final table ───────────────────────────────────────────────────────
+    st.subheader(f"Result: {len(display_df):,} rows  •  {start_date} → {end_date}")
+
+    final_cols = [
+        "Billing Date", "Driver Name EN", "PY Name 1",
+        MATERIAL_COL, QTY_COL, UOM_COL,
+        "Cost Price", "Pack Size", "Total Cost",
+        NET_COL, "Discount Value", "Discount %",
+        "⚠ Cost Missing", "⚠ Pack Missing (KAR)"
+    ]
+    avail_cols = [c for c in final_cols if c in display_df.columns]
 
     st.dataframe(
-        display_df[
-            [
-                "Billing Date", "Driver Name EN", "PY Name 1",
-                MATERIAL_COL, qty_col, uom_col,
-                "Cost Price", "Pack Size", "Total Cost",
-                net_col, "Discount Value", "Discount %",
-                "⚠ Cost Missing", "⚠ Pack Missing (KAR)"
-            ]
-        ],
+        display_df[avail_cols].sort_values("Billing Date", ascending=False),
         use_container_width=True,
         hide_index=True
     )
+      # ============================================================
+    # 📊 Category Contribution % (ONE-LINE INSIGHT)
+    # ============================================================
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # ⬇️ DOWNLOADS
-    # ─────────────────────────────────────────────────────────────────────────
-    st.markdown("### ⬇️ Download Full Result")
+    st.markdown("### 📊 Category Contribution")
 
+    # ensure category is clean (DO NOT remove)
+    df_val["Category"] = (
+        df_val["Category"]
+        .fillna("Unmapped")
+        .astype(str)
+        .str.strip()
+    )
+
+    category_contribution = (
+        df_val
+        .groupby("Category")[NET_COL]
+        .sum()
+        .reset_index()
+        .rename(columns={NET_COL: "Net Value"})
+    )
+
+    total_net_value = category_contribution["Net Value"].sum()
+
+    for _, row in category_contribution.sort_values("Net Value", ascending=False).iterrows():
+        pct = (row["Net Value"] / total_net_value * 100) if total_net_value else 0
+        st.markdown(f"• **{row['Category']}** → {pct:.1f}%")
+
+    # ============================================================
+    # 💰 Profit View – Margin by Category
+    # ============================================================
+
+    st.markdown("## 💰 Profit View – Margin by Category")
+
+    margin_by_category = (
+        df_val
+        .groupby("Category")
+        .agg(
+            Net_Value=(NET_COL, "sum"),
+            Total_Cost=("Total Cost", "sum"),
+        )
+        .reset_index()
+    )
+
+    margin_by_category["Gross Profit"] = (
+        margin_by_category["Net_Value"] - margin_by_category["Total_Cost"]
+    )
+
+    margin_by_category["Margin %"] = (
+        margin_by_category["Gross Profit"] /
+        margin_by_category["Net_Value"].replace(0, np.nan) * 100
+    ).round(1)
+
+    st.dataframe(
+        margin_by_category.sort_values("Net_Value", ascending=False),
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    # ============================================================
+    # 🏬 Customer × Category Sales Matrix
+    # ============================================================
+
+    st.markdown("## 🏬 Customer-wise Sales by Category")
+
+    CUSTOMER_COL = "PY Name 1"  # keep same as your app
+
+    customer_category = (
+        df_val
+        .pivot_table(
+            index=CUSTOMER_COL,
+            columns="Category",
+            values=NET_COL,
+            aggfunc="sum",
+            fill_value=0
+        )
+    )
+
+    # Add total column
+    customer_category["Total"] = customer_category.sum(axis=1)
+
+    # Sort customers by total value
+    customer_category = customer_category.sort_values("Total", ascending=False)
+
+    # Add total row at bottom
+    total_row = customer_category.sum().to_frame().T
+    total_row.index = ["TOTAL"]
+
+    customer_category_final = pd.concat([customer_category, total_row])
+
+    st.dataframe(
+        customer_category_final,
+        use_container_width=True
+    )
+
+    # ─── Downloads ─────────────────────────────────────────────────────────
+    st.markdown("### ⬇️ Export")
     c1, c2 = st.columns(2)
     with c1:
         csv = display_df.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            "⬇️ CSV",
-            csv,
-            f"profit_margin_{start_date}_to_{end_date}.csv"
-        )
-
+        st.download_button("⬇️ CSV", csv, f"profit_margin_{start_date}_to_{end_date}.csv", "text/csv")
     with c2:
-        st.download_button(
-            "⬇️ Excel",
-            data=to_excel_bytes(display_df),
-            file_name=f"profit_margin_{start_date}_to_{end_date}.xlsx"
-        )
-
-                
+        st.download_button("⬇️ Excel", data=to_excel_bytes(display_df),
+                           file_name=f"profit_margin_{start_date}_to_{end_date}.xlsx")  
+                                
 elif choice == "🧭 Management Command Center":
     st.title("🧭 Management Command Center")
 
