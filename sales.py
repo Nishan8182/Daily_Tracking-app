@@ -666,63 +666,61 @@ def load_data(file):
     with st.spinner(texts[lang]["loading_data"]):
         try:
             xls = pd.ExcelFile(file)
-            required_sheets = ["sales data", "Target", "sales channels"]
-            missing = [s for s in required_sheets if s not in xls.sheet_names]
-            if missing:
-                st.error(texts[lang]["sheet_missing"].format(', '.join(required_sheets), ', '.join(missing)))
-                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-            sales_df = pd.read_excel(xls, sheet_name="sales data")
-            target_df = pd.read_excel(xls, sheet_name="Target")
-            channels_df = pd.read_excel(xls, sheet_name="sales channels")
-            ytd_df = pd.read_excel(xls, sheet_name="YTD") if "YTD" in xls.sheet_names else pd.DataFrame()
-
-            required_cols = ["Billing Date", "Driver Name EN", "Net Value", "Billing Type", "PY Name 1", "SP Name1"]
-            if not all(col in sales_df.columns for col in required_cols):
-                st.error(texts[lang]["cols_missing"].format(set(required_cols) - set(sales_df.columns)))
-                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
+            # ✅ DEFINE FIRST (FIX)
             def normalize_series(s):
                 try:
                     return s.astype(str).str.strip().str.lower().replace({'nan': ''})
                 except Exception:
                     return s
 
-            sales_df["Billing Date"] = pd.to_datetime(sales_df["Billing Date"], errors='coerce')
-            if "PY Name 1" in sales_df.columns:
-                sales_df["_py_name_norm"] = normalize_series(sales_df["PY Name 1"])
-            else:
-                sales_df["_py_name_norm"] = ""
+            # ================= REQUIRED SHEETS =================
+            required_sheets = ["sales data", "Target", "sales channels"]
+            missing = [s for s in required_sheets if s not in xls.sheet_names]
+            if missing:
+                st.error(texts[lang]["sheet_missing"].format(
+                    ', '.join(required_sheets), ', '.join(missing)
+                ))
+                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-            if "PY Name 1" in channels_df.columns:
-                channels_df["_py_name_norm"] = normalize_series(channels_df["PY Name 1"])
-            else:
-                channels_df["_py_name_norm"] = ""
-            if "Channels" in channels_df.columns:
-                channels_df["_channels_norm"] = normalize_series(channels_df["Channels"])
-            else:
-                channels_df["_channels_norm"] = ""
+            # ================= MAIN SHEETS =================
+            sales_df    = pd.read_excel(xls, sheet_name="sales data")
+            target_df   = pd.read_excel(xls, sheet_name="Target")
+            channels_df = pd.read_excel(xls, sheet_name="sales channels")
 
-            if not ytd_df.empty and "Billing Date" in ytd_df.columns:
-                ytd_df["Billing Date"] = pd.to_datetime(ytd_df["Billing Date"], errors='coerce')
+            # ================= R&R SHEET (FIXED) =================
+            rr_df = pd.read_excel(xls, sheet_name="R&R") if "R&R" in xls.sheet_names else pd.DataFrame()
+
+            if not rr_df.empty and "PY Name 1" in rr_df.columns:
+                rr_df["_py_name_norm"] = normalize_series(rr_df["PY Name 1"])
+
+                for col in ["Rebate %", "Display Rental value"]:
+                    if col in rr_df.columns:
+                        rr_df[col] = pd.to_numeric(rr_df[col], errors="coerce").fillna(0)
+                    else:
+                        rr_df[col] = 0.0
+
+            # ================= OPTIONAL YTD =================
+            ytd_df = pd.read_excel(xls, sheet_name="YTD") if "YTD" in xls.sheet_names else pd.DataFrame()
+
+            # ================= NORMALIZATION =================
+            sales_df["Billing Date"] = pd.to_datetime(sales_df["Billing Date"], errors="coerce")
+            sales_df["_py_name_norm"] = normalize_series(sales_df["PY Name 1"])
+
+            channels_df["_py_name_norm"] = normalize_series(channels_df["PY Name 1"])
+            channels_df["_channels_norm"] = normalize_series(channels_df["Channels"])
+
             if not ytd_df.empty and "PY Name 1" in ytd_df.columns:
                 ytd_df["_py_name_norm"] = normalize_series(ytd_df["PY Name 1"])
 
-            # Hash sensitive columns for privacy (e.g., Driver Name EN)
-            def hash_column(col):
-                return col.apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)
+            # ================= RETURN ALL =================
+            return sales_df, target_df, ytd_df, channels_df, rr_df
 
-            sales_df["Driver Name EN Hashed"] = hash_column(sales_df["Driver Name EN"])
-            if "Driver Name EN" in ytd_df.columns:
-                ytd_df["Driver Name EN Hashed"] = hash_column(ytd_df["Driver Name EN"])
-            if "Driver Name EN" in target_df.columns:
-                target_df["Driver Name EN Hashed"] = hash_column(target_df["Driver Name EN"])
-
-            return sales_df, target_df, ytd_df, channels_df
         except Exception as e:
             st.error(texts[lang]["load_error"].format(e))
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        
+        
 # --- Helpers: Downloads ---
 @st.cache_data
 def to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Sheet1", index: bool = False) -> bytes:
@@ -945,6 +943,7 @@ uploaded = st.sidebar.file_uploader("", type=["xlsx"], key="single_upload")
 if st.sidebar.button(texts[lang]["clear_data"]):
     for k in [
         "sales_df", "target_df", "ytd_df", "channels_df",
+        "rr_df",               # ← ADD THIS LINE HERE
         "price_df", "data_loaded", "audit_log"
     ]:
         if k in st.session_state:
@@ -970,12 +969,13 @@ if uploaded is not None:
 
 # ================= LOAD MAIN DATA (ONCE) =================
 if uploaded is not None and "data_loaded" not in st.session_state:
-    sales_df, target_df, ytd_df, channels_df = load_data(uploaded)
+    sales_df, target_df, ytd_df, channels_df, rr_df = load_data(uploaded)
 
     st.session_state["sales_df"] = sales_df
     st.session_state["target_df"] = target_df
     st.session_state["ytd_df"] = ytd_df
     st.session_state["channels_df"] = channels_df
+    st.session_state["rr_df"] = rr_df   # ← ADD THIS
     st.session_state["data_loaded"] = True
     st.session_state["audit_log"] = []  # Initialize audit log
 
@@ -5349,6 +5349,16 @@ elif choice == "💰 Profit & Margin":
     df_val["Cost Price"]  = pd.NA
     df_val["Pack Size"]   = pd.NA
     df_val["Category"]    = pd.NA
+# ─── Customer normalization (for R&R / contracts) ─────────────────────
+    if "PY Name 1" in df_val.columns:
+        df_val["_py_name_norm"] = (
+            df_val["PY Name 1"]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+    else:
+        df_val["_py_name_norm"] = ""
 
     # ─── Price list mapping ────────────────────────────────────────────────
     if not price_df.empty and PRICE_MAT_COL:
@@ -5411,6 +5421,88 @@ elif choice == "💰 Profit & Margin":
     else:
         df_val["⚠ Pack Missing (KAR)"] = False
 
+    # ============================================================
+    # ✅ NEW: R&R (Rebate % + Display Rental value) mapping & logic
+    # ============================================================
+    rr_df = st.session_state.get("rr_df", pd.DataFrame())
+
+    RR_CUST_COL   = find_column(rr_df, ["PY Name 1", "Customer", "Customer Name"])
+    REBATE_COL    = find_column(rr_df, ["Rebate %", "Rebate", "Rebate Percent", "Rebate%"])
+    RENTAL_COL    = find_column(rr_df, ["Display Rental value", "Display Rental", "Rental", "Annual Rental", "Rental Value"])
+
+    # defaults (so page never breaks)
+    df_val["Rebate %"] = 0.0
+    df_val["Display Rental value"] = 0.0
+
+    if not rr_df.empty and RR_CUST_COL and (REBATE_COL or RENTAL_COL) and ("PY Name 1" in df_val.columns):
+        rr_tmp = rr_df.copy()
+        rr_tmp["_py_name_norm"] = rr_tmp[RR_CUST_COL].astype(str).str.strip().str.upper()
+
+        df_val["_py_name_norm"] = df_val["PY Name 1"].astype(str).str.strip().str.upper()
+
+        if REBATE_COL:
+            rr_tmp["Rebate %"] = pd.to_numeric(rr_tmp[REBATE_COL], errors="coerce").fillna(0)
+        else:
+            rr_tmp["Rebate %"] = 0.0
+
+        if RENTAL_COL:
+            rr_tmp["Display Rental value"] = pd.to_numeric(rr_tmp[RENTAL_COL], errors="coerce").fillna(0)
+        else:
+            rr_tmp["Display Rental value"] = 0.0
+
+        rr_map = rr_tmp.set_index("_py_name_norm")[["Rebate %", "Display Rental value"]]
+
+        df_val["Rebate %"] = df_val["_py_name_norm"].map(rr_map["Rebate %"]).fillna(0.0)
+        df_val["Display Rental value"] = df_val["_py_name_norm"].map(rr_map["Display Rental value"]).fillna(0.0)
+    else:
+        # keep defaults; optional info (no stop)
+        pass
+
+    # Rebate Value applies only on positive sales (avoid confusion on returns)
+    df_val["Rebate Value"] = np.where(
+        df_val[NET_COL] > 0,
+        df_val[NET_COL] * (pd.to_numeric(df_val["Rebate %"], errors="coerce").fillna(0) / 100.0),
+        0.0
+    )
+
+    # Allocate annual rental to the selected period (by days in range), then distribute by sales share per customer
+    period_days = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
+    year_factor = period_days / 365.0
+
+    # annual rental for period
+    df_val["_period_rental"] = df_val["Display Rental value"] * year_factor
+
+    # sales share per customer (only positive net)
+    pos_sales = df_val[df_val[NET_COL] > 0].groupby("_py_name_norm")[NET_COL].sum()
+    df_val["_cust_pos_sales"] = df_val["_py_name_norm"].map(pos_sales)
+    df_val["_sales_share"] = np.where(
+        (df_val[NET_COL] > 0) & (df_val["_cust_pos_sales"].notna()) & (df_val["_cust_pos_sales"] != 0),
+        df_val[NET_COL] / df_val["_cust_pos_sales"],
+        0.0
+    )
+
+    df_val["Allocated Rental"] = (df_val["_period_rental"] * df_val["_sales_share"]).fillna(0.0)
+
+    # Effective profit after Discount + Rebate + Rental
+    df_val["Effective Profit"] = (
+        df_val[NET_COL]
+        - df_val["Total Cost"].fillna(0)
+        - df_val["Rebate Value"].fillna(0)
+        - df_val["Allocated Rental"].fillna(0)
+    )
+
+    df_val["Effective Margin %"] = np.where(
+        df_val[NET_COL] != 0,
+        (df_val["Effective Profit"] / df_val[NET_COL]) * 100,
+        0.0
+    )
+    df_val["Effective Margin %"] = pd.to_numeric(df_val["Effective Margin %"], errors="coerce").fillna(0).round(2)
+
+    # clean helper cols used for allocation
+    for _c in ["_period_rental", "_cust_pos_sales", "_sales_share"]:
+        if _c in df_val.columns:
+            pass  # keep internal (not shown), safe
+
     # ─── Category logic ────────────────────────────────────────────────────
     sales_category_value  = 0.0
     return_category_value = 0.0
@@ -5451,6 +5543,23 @@ elif choice == "💰 Profit & Margin":
     cols[4].metric("Cost Missing Rows",   f"{df_val['⚠ Cost Missing'].sum():,}")
     cols[5].metric("Positive / Sales Val", f"{sales_category_value:,.2f}")
     cols[6].metric("Returns / Negative",   f"{return_category_value:,.2f}")
+
+    # ✅ NEW: R&R Executive Add-on (keeps your old KPIs unchanged)
+    st.markdown("## 🧾 Contract (R&R) Impact")
+
+    total_rebate = df_val["Rebate Value"].sum(min_count=1)
+    total_rental = df_val["Allocated Rental"].sum(min_count=1)
+    total_eff_profit = df_val["Effective Profit"].sum(min_count=1)
+
+    cA, cB, cC, cD = st.columns(4)
+    cA.metric("Rebate Value", f"{total_rebate:,.2f}")
+    cB.metric("Allocated Rental (Period)", f"{total_rental:,.2f}")
+    cC.metric("Effective Profit (after R&R)", f"{total_eff_profit:,.2f}")
+    # effective margin (sales only)
+    sales_only_net = df_val[df_val[NET_COL] > 0][NET_COL].sum()
+    sales_only_eff_profit = df_val[df_val[NET_COL] > 0]["Effective Profit"].sum()
+    eff_margin_pct = (sales_only_eff_profit / sales_only_net * 100) if sales_only_net else 0
+    cD.metric("Effective Margin % (Sales)", f"{eff_margin_pct:.2f}%")
 
     # ============================================================
     # 📊 EXECUTIVE SUMMARY – CATEGORY PERFORMANCE (FINAL)
@@ -5528,6 +5637,9 @@ elif choice == "💰 Profit & Margin":
         agg_dict["Discount_Value"] = ("Discount Value", "sum")
     if "Total Cost" in df_val.columns:
         agg_dict["Total_Cost"] = ("Total Cost", "sum")
+    # ✅ NEW (optional) include effective margin
+    if "Effective Profit" in df_val.columns:
+        agg_dict["Effective_Profit"] = ("Effective Profit", "sum")
 
     if agg_dict:
         material_summary = (
@@ -5578,6 +5690,9 @@ elif choice == "💰 Profit & Margin":
         MATERIAL_COL, QTY_COL, UOM_COL,
         "Cost Price", "Pack Size", "Total Cost",
         NET_COL, "Discount Value", "Discount %",
+        # ✅ NEW: R&R columns
+        "Rebate %", "Rebate Value", "Display Rental value", "Allocated Rental",
+        "Effective Profit", "Effective Margin %",
         "⚠ Cost Missing", "⚠ Pack Missing (KAR)"
     ]
     avail_cols = [c for c in final_cols if c in display_df.columns]
@@ -5587,6 +5702,60 @@ elif choice == "💰 Profit & Margin":
         use_container_width=True,
         hide_index=True
     )
+
+    # ✅ NEW: Customer contract compliance summary (R&R + Discount)
+    st.markdown("## 📜 Customer Contract Compliance (Discount + Rebate + Rental)")
+
+    if "PY Name 1" in df_val.columns:
+        cust_sum = (
+            df_val.groupby("PY Name 1")
+                  .agg(
+                      Net_Sales=(NET_COL, "sum"),
+                      Total_Cost=("Total Cost", "sum"),
+                      Discount_Value=("Discount Value", "sum"),
+                      Rebate_Value=("Rebate Value", "sum"),
+                      Rental_Allocated=("Allocated Rental", "sum"),
+                      Effective_Profit=("Effective Profit", "sum"),
+                  )
+                  .reset_index()
+        )
+
+        # Leakage % on positive sales only (safer)
+        cust_pos_sales = df_val[df_val[NET_COL] > 0].groupby("PY Name 1")[NET_COL].sum()
+        cust_sum["_pos_sales"] = cust_sum["PY Name 1"].map(cust_pos_sales).fillna(0)
+
+        cust_sum["Total Leakage"] = (
+            cust_sum["Discount_Value"].abs()
+            + cust_sum["Rebate_Value"].abs()
+            + cust_sum["Rental_Allocated"].abs()
+        )
+
+        cust_sum["Leakage % (on Sales)"] = np.where(
+            cust_sum["_pos_sales"] != 0,
+            (cust_sum["Total Leakage"] / cust_sum["_pos_sales"]) * 100,
+            0
+        ).round(2)
+
+        cust_sum["Effective Margin %"] = np.where(
+            cust_sum["Net_Sales"] != 0,
+            (cust_sum["Effective_Profit"] / cust_sum["Net_Sales"]) * 100,
+            0
+        ).round(2)
+
+        show_cols = [
+            "PY Name 1", "Net_Sales", "Total_Cost",
+            "Discount_Value", "Rebate_Value", "Rental_Allocated",
+            "Total Leakage", "Leakage % (on Sales)",
+            "Effective_Profit", "Effective Margin %"
+        ]
+
+        st.dataframe(
+            cust_sum[show_cols].sort_values("Leakage % (on Sales)", ascending=False),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("Customer column 'PY Name 1' not found for contract summary.")
 
     # ============================================================
     # 📊 Category Contribution % (ONE-LINE INSIGHT)
