@@ -5380,9 +5380,27 @@ elif choice == "💰 Profit & Margin":
 
     # ─── Discount calculation ──────────────────────────────────────────────
     df_val[NET_COL] = pd.to_numeric(df_val[NET_COL], errors='coerce').fillna(0)
+
+    # ✅ FIX #1: Return/Cancel rows cost reversal (prevents wrong Discount Value)
+    # If Net Value is negative but Total Cost is positive, flip cost to negative (cost reversal)
+    df_val.loc[
+        (df_val[NET_COL] < 0) &
+        (df_val["Total Cost"].notna()) &
+        (df_val["Total Cost"] > 0),
+        "Total Cost"
+    ] *= -1
+
+    # Now Discount Value becomes correct for both Sales and Returns
     df_val["Discount Value"] = df_val[NET_COL] - df_val["Total Cost"].fillna(0)
-    net_safe = df_val[NET_COL].replace(0, np.nan)
-    df_val["Discount %"] = (df_val["Discount Value"] / net_safe * 100).fillna(0).round(2)
+
+    # ✅ FIX #2: Discount % only for SALES (Net >= 0) and based on Cost
+    cost_safe = df_val["Total Cost"].replace(0, np.nan)
+    df_val["Discount %"] = np.where(
+        df_val[NET_COL] >= 0,
+        (abs(df_val["Discount Value"]) / cost_safe * 100),
+        0
+    )
+    df_val["Discount %"] = pd.to_numeric(df_val["Discount %"], errors="coerce").fillna(0).round(2)
 
     df_val["⚠ Cost Missing"] = df_val["Cost Price"].isna()
 
@@ -5421,7 +5439,9 @@ elif choice == "💰 Profit & Margin":
     total_net      = df_val[NET_COL].sum()
     total_cost     = df_val["Total Cost"].sum(min_count=1)
     total_discount = df_val["Discount Value"].sum(min_count=1)
-    overall_disc_pct = (total_discount / total_net * 100) if total_net != 0 else 0
+
+    # ✅ (Keep same KPI style) but make Discount % based on Total Cost safely
+    overall_disc_pct = (total_discount / total_cost * 100) if total_cost != 0 else 0
 
     cols = st.columns(7)
     cols[0].metric("Total Net",           f"{total_net:,.2f}")
@@ -5431,8 +5451,7 @@ elif choice == "💰 Profit & Margin":
     cols[4].metric("Cost Missing Rows",   f"{df_val['⚠ Cost Missing'].sum():,}")
     cols[5].metric("Positive / Sales Val", f"{sales_category_value:,.2f}")
     cols[6].metric("Returns / Negative",   f"{return_category_value:,.2f}")
-  
-    
+
     # ============================================================
     # 📊 EXECUTIVE SUMMARY – CATEGORY PERFORMANCE (FINAL)
     # ============================================================
@@ -5442,7 +5461,6 @@ elif choice == "💰 Profit & Margin":
     if "Category" not in df_val.columns or df_val["Category"].isna().all():
         st.warning("⚠️ Category not mapped — check price list material matching")
     else:
-        # ─── Net Value by Category / Type (SINGLE SOURCE) ───
         category_summary = (
             df_val
             .groupby("Category", dropna=False)[NET_COL]
@@ -5452,10 +5470,9 @@ elif choice == "💰 Profit & Margin":
             .sort_values("Net Value", ascending=False)
         )
 
-        # ─── KPI PER CATEGORY (ONE KPI = ONE CATEGORY) ───
         st.markdown("### 🧾 Category-wise Net Value")
 
-        kpi_per_row = 4  # adjust: 3 or 5 if you want
+        kpi_per_row = 4
         data = category_summary.to_dict("records")
 
         for i in range(0, len(data), kpi_per_row):
@@ -5466,9 +5483,6 @@ elif choice == "💰 Profit & Margin":
                         label=str(row["Category"]),
                         value=f"KD {row['Net Value']:,.0f}"
                     )
-        # ============================================================
-        # 📊 Category Contribution % (One-line insight)
-        # ============================================================
 
         st.markdown("### 📌 Category Contribution")
 
@@ -5486,7 +5500,6 @@ elif choice == "💰 Profit & Margin":
             category_contribution["Net Value"] / total_net_value * 100
         ).round(1)
 
-        # one-line insights
         insight_lines = [
             f"• **{row['Category']}** → {row['Contribution %']}%"
             for _, row in category_contribution
@@ -5495,25 +5508,6 @@ elif choice == "💰 Profit & Margin":
         ]
 
         st.markdown("  \n".join(insight_lines))
-            
-
-        # # ─── ONLY TABLE YOU KEEP ───
-        # st.markdown("### 📊 Net Value by Category / Type")
-
-        # st.dataframe(
-        #     category_summary,
-        #     use_container_width=True,
-        #     hide_index=True
-        # )
-
-    # # ─── Debug: category mapping result ────────────────────────────────────
-    # if "Category" in df_val.columns:
-    #     st.caption("DEBUG — Top 12 values in 'Category' column after mapping")
-    #     st.write(df_val["Category"].value_counts(dropna=False).head(12))
-    #     if df_val["Category"].isna().mean() > 0.85:
-    #         st.warning("→ Most rows have no category → material codes probably don't match between files")
-    # else:
-    #     st.info("No category column was created from price list")
 
     # ─── Data Quality ──────────────────────────────────────────────────────
     st.markdown("### 🧪 Data Quality")
@@ -5561,30 +5555,6 @@ elif choice == "💰 Profit & Margin":
     else:
         st.info("No numeric columns available for material summary.")
 
-    # # ─── Category Breakdown Table ──────────────────────────────────────────
-    # st.markdown("### 📊 Net Value by Category / Type")
-
-    # if has_category:
-    #     cat_summary = (
-    #         df_val.groupby("Category", dropna=False)[NET_COL]
-    #               .agg(["sum", "count"])
-    #               .rename(columns={"sum": "Net Value", "count": "Transactions"})
-    #               .reset_index()
-    #     )
-    #     cat_summary["Net Value"] = cat_summary["Net Value"].round(2)
-    #     st.dataframe(cat_summary.sort_values("Net Value", ascending=False), use_container_width=True)
-    # else:
-    #     st.info("No category column mapped → showing sign-based split only")
-    #     sign_summary = pd.DataFrame({
-    #         "Type": ["Positive (Sales)", "Negative (Returns)"],
-    #         "Net Value": [sales_category_value, return_category_value],
-    #         "Transactions": [
-    #             len(df_val[df_val[NET_COL] >= 0]),
-    #             len(df_val[df_val[NET_COL] < 0])
-    #         ]
-    #     })
-    #     st.dataframe(sign_summary, use_container_width=True)
-
     # ─── Quick Filters ─────────────────────────────────────────────────────
     st.markdown("### 🎯 Quick Filters")
     f1, f2, f3 = st.columns(3)
@@ -5617,13 +5587,13 @@ elif choice == "💰 Profit & Margin":
         use_container_width=True,
         hide_index=True
     )
-      # ============================================================
+
+    # ============================================================
     # 📊 Category Contribution % (ONE-LINE INSIGHT)
     # ============================================================
 
     st.markdown("### 📊 Category Contribution")
 
-    # ensure category is clean (DO NOT remove)
     df_val["Category"] = (
         df_val["Category"]
         .fillna("Unmapped")
@@ -5675,14 +5645,14 @@ elif choice == "💰 Profit & Margin":
         use_container_width=True,
         hide_index=True
     )
-    
+
     # ============================================================
     # 🏬 Customer × Category Sales Matrix
     # ============================================================
 
     st.markdown("## 🏬 Customer-wise Sales by Category")
 
-    CUSTOMER_COL = "PY Name 1"  # keep same as your app
+    CUSTOMER_COL = "PY Name 1"
 
     customer_category = (
         df_val
@@ -5695,13 +5665,9 @@ elif choice == "💰 Profit & Margin":
         )
     )
 
-    # Add total column
     customer_category["Total"] = customer_category.sum(axis=1)
-
-    # Sort customers by total value
     customer_category = customer_category.sort_values("Total", ascending=False)
 
-    # Add total row at bottom
     total_row = customer_category.sum().to_frame().T
     total_row.index = ["TOTAL"]
 
@@ -5720,7 +5686,7 @@ elif choice == "💰 Profit & Margin":
         st.download_button("⬇️ CSV", csv, f"profit_margin_{start_date}_to_{end_date}.csv", "text/csv")
     with c2:
         st.download_button("⬇️ Excel", data=to_excel_bytes(display_df),
-                           file_name=f"profit_margin_{start_date}_to_{end_date}.xlsx")  
+                           file_name=f"profit_margin_{start_date}_to_{end_date}.xlsx")
                                 
 elif choice == "🧭 Management Command Center":
     st.title("🧭 Management Command Center")
