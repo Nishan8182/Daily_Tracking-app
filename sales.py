@@ -56,6 +56,8 @@ import hashlib
 from difflib import SequenceMatcher
 from fuzzywuzzy import fuzz
 from io import BytesIO
+import urllib.parse
+from datetime import date
 
 # --- Language Selector ---
 st.sidebar.header("Language / اللغة")
@@ -5856,8 +5858,68 @@ elif choice == "💰 Profit & Margin":
     with c2:
         st.download_button("⬇️ Excel", data=to_excel_bytes(display_df),
                            file_name=f"profit_margin_{start_date}_to_{end_date}.xlsx")
-                                
-elif choice == "🧭 Management Command Center":
+        
+        
+
+
+from datetime import date
+
+def build_daily_email_summary(
+    total_target,
+    total_sales,
+    salesman_df,
+    customer_sales
+):
+    today_str = date.today().strftime("%d %b %Y")
+    balance = total_target - total_sales
+
+    subject = f"Daily Sales Summary – {today_str}"
+
+    body = f"""
+📊 OVERALL PERFORMANCE
+Total Target : {total_target:,.0f} KD
+Achieved     : {total_sales:,.0f} KD
+Balance      : {balance:,.0f} KD
+
+👤 SALESMAN PERFORMANCE
+--------------------------------------------------
+Salesman        Target      Achieved     Balance
+--------------------------------------------------
+"""
+
+    for _, r in salesman_df.iterrows():
+        bal = r["Target"] - r["Achieved"]
+        body += (
+            f"{r['Driver Name EN']:<15}"
+            f"{r['Target']:>12,.0f}"
+            f"{r['Achieved']:>14,.0f}"
+            f"{bal:>14,.0f}\n"
+        )
+
+    body += """
+--------------------------------------------------
+
+🏪 CUSTOMER SALES SUMMARY
+--------------------------------------------------
+Customer              Sales (KD)
+--------------------------------------------------
+"""
+
+    for cust, val in customer_sales.items():
+        body += f"{cust:<22}{val:>12,.0f}\n"
+
+    body += """
+--------------------------------------------------
+
+Regards,
+Sales Dashboard
+"""
+
+    return subject, body
+
+
+if choice == "🧭 Management Command Center":
+
     st.title("🧭 Management Command Center")
 
     # ================= SAFETY CHECK =================
@@ -5866,22 +5928,18 @@ elif choice == "🧭 Management Command Center":
         st.stop()
 
     df = sales_df.copy()
+    df["Billing Date"] = pd.to_datetime(df["Billing Date"], errors="coerce")
 
-    # ================= DATE & WORKING DAYS (EXCLUDE FRIDAY ONLY) =================
+    # ================= DATE & WORKING DAYS =================
     today = pd.to_datetime("today").normalize()
     month_start = today.replace(day=1)
     month_end = month_start + pd.offsets.MonthEnd(1)
 
-    # All days in month
     all_days = pd.date_range(month_start, month_end, freq="D")
-
-    # Exclude Friday only (weekday=4)
-    working_days = all_days[all_days.weekday != 4]
+    working_days = all_days[all_days.weekday != 4]  # Exclude Friday only
 
     total_working_days = len(working_days)
-
-    days_completed = len(working_days[working_days <= today])
-    days_completed = max(1, days_completed)  # safety
+    days_completed = max(1, len(working_days[working_days <= today]))
 
     # ================= TARGET DATA =================
     if "target_df" in globals() and "KA Target" in target_df.columns:
@@ -5889,11 +5947,11 @@ elif choice == "🧭 Management Command Center":
     else:
         ka_target_map = pd.Series(dtype=float)
 
-    # ================= OVERALL KA SALES =================
+    # ================= OVERALL SALES =================
     total_sales = float(df["Net Value"].sum())
     total_ka_target = float(ka_target_map.sum()) if not ka_target_map.empty else 0.0
 
-    # ================= DAILY-PACE CALCULATION (OVERALL KA) =================
+    # ================= DAILY PACE =================
     ka_target_per_day = round(
         total_ka_target / total_working_days, 0
     ) if total_working_days > 0 else 0
@@ -5913,12 +5971,10 @@ elif choice == "🧭 Management Command Center":
         else:
             return "🔴 RED"
 
-    overall_ka_status = pace_status(
-        ka_actual_per_day, ka_target_per_day
-    )
+    overall_ka_status = pace_status(ka_actual_per_day, ka_target_per_day)
 
-    # ================= 1️⃣ EXECUTIVE RAG DASHBOARD =================
-    st.subheader("1️⃣ Executive RAG Dashboard (Daily Pace Based)")
+    # ================= 1️⃣ EXECUTIVE DASHBOARD =================
+    st.subheader("1️⃣ Executive RAG Dashboard (Daily Pace)")
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total KA Sales", f"KD {total_sales:,.0f}")
@@ -5927,8 +5983,8 @@ elif choice == "🧭 Management Command Center":
     c4.metric("KA Actual / Day", f"KD {ka_actual_per_day:,.0f}")
     c5.metric("Overall KA Status", overall_ka_status)
 
-    # ================= 2️⃣ SALESMAN DAILY-PACE RISK TABLE =================
-    st.subheader("2️⃣ Salesman Early-Warning (Daily Pace – 95% Rule)")
+    # ================= 2️⃣ SALESMAN TABLE =================
+    st.subheader("2️⃣ Salesman Performance")
 
     salesman_df = (
         df.groupby("Driver Name EN")["Net Value"]
@@ -5936,87 +5992,72 @@ elif choice == "🧭 Management Command Center":
         .reset_index(name="Achieved")
     )
 
-    salesman_df["Target"] = salesman_df["Driver Name EN"].map(
-        ka_target_map
-    ).fillna(0)
-
-    salesman_df["Target / Day"] = (
-        salesman_df["Target"] / total_working_days
-    ).round(0)
-
-    salesman_df["Actual / Day"] = (
-        salesman_df["Achieved"] / days_completed
-    ).round(0)
-
-    def salesman_risk(row):
-        return pace_status(
-            row["Actual / Day"],
-            row["Target / Day"]
-        )
-
-    salesman_df["Risk"] = salesman_df.apply(
-        salesman_risk, axis=1
-    )
+    salesman_df["Target"] = salesman_df["Driver Name EN"].map(ka_target_map).fillna(0)
+    salesman_df["Balance"] = salesman_df["Target"] - salesman_df["Achieved"]
 
     st.dataframe(
-        salesman_df[
-            [
-                "Driver Name EN",
-                "Target",
-                "Achieved",
-                "Target / Day",
-                "Actual / Day",
-                "Risk"
-            ]
-        ].sort_values("Risk"),
+        salesman_df[["Driver Name EN", "Target", "Achieved", "Balance"]],
         use_container_width=True
     )
 
-    # ================= 5️⃣ ACTION-BASED MANAGEMENT INSIGHTS =================
-    st.subheader("5️⃣ Action-based Management Insights")
+    # ================= 3️⃣ MANAGEMENT INSIGHTS =================
+    st.subheader("3️⃣ Action-based Management Insights")
 
-    insights = []
+    st.write(
+        "🟢 Overall KA pace ON TRACK"
+        if overall_ka_status == "🟢 GREEN"
+        else "🟠 Overall KA pace NEEDS PUSH"
+        if overall_ka_status == "🟠 AMBER"
+        else "🚨 Overall KA pace CRITICAL"
+    )
 
-    red_salesmen = salesman_df[salesman_df["Risk"] == "🔴 RED"]
-    amber_salesmen = salesman_df[salesman_df["Risk"] == "🟠 AMBER"]
+    # ================= 4️⃣ EMAIL SUMMARY =================
+    st.subheader("📧 Daily Email Summary")
 
-    if not red_salesmen.empty:
-        insights.append(
-            f"❗ {len(red_salesmen)} salesmen are BELOW daily pace (<95%) – immediate action required"
-        )
+    # ---- Customer sales (Top 10) ----
+    customer_sales = (
+        df.groupby("PY Name 1")["Net Value"]
+        .sum()
+        .sort_values(ascending=False)
+        .head(10)
+    )
 
-    if not amber_salesmen.empty:
-        insights.append(
-            f"⚠️ {len(amber_salesmen)} salesmen are SLIGHTLY BELOW pace (95–99%) – close monitoring needed"
-        )
+    subject, body = build_daily_email_summary(
+        total_ka_target,
+        total_sales,
+        salesman_df,
+        customer_sales
+    )
 
-    if overall_ka_status == "🔴 RED":
-        insights.append(
-            "🚨 Overall KA pace is BELOW 95% – revise visit plan, focus on KA & fast movers"
-        )
-    elif overall_ka_status == "🟠 AMBER":
-        insights.append(
-            "🟠 Overall KA pace is JUST BELOW target – strong push required this week"
-        )
-    else:
-        insights.append(
-            "🟢 Overall KA pace is ON TRACK – maintain execution discipline"
-        )
+    st.text_area(
+        "📄 Email Preview",
+        value=f"Subject: {subject}\n\n{body}",
+        height=420
+    )
 
-    # Optional Talabat warning (safe)
-    if "PY Name 1" in df.columns:
-        talabat_returns = df[
-            (df["PY Name 1"].str.contains("TALABAT", case=False, na=False)) &
-            (df["Net Value"] < 0)
-        ]["Net Value"].sum()
+    mailto_link = (
+        f"mailto:?subject={urllib.parse.quote(subject)}"
+        f"&body={urllib.parse.quote(body)}"
+    )
 
-        if talabat_returns < 0:
-            insights.append(
-                "🚨 Talabat negative sales / returns detected – investigate service & billing"
-            )
+    st.markdown(
+        f"""
+        <a href="{mailto_link}">
+            <button style="
+                background-color:#2563eb;
+                color:white;
+                padding:10px 18px;
+                border:none;
+                border-radius:6px;
+                font-size:16px;
+                cursor:pointer;">
+                📧 Send Daily Summary Email
+            </button>
+        </a>
+        """,
+        unsafe_allow_html=True
+    )
 
-    for msg in insights:
-        st.write(msg)
 
 # Admin-only Audit Logs View
 if user_role == "admin":
