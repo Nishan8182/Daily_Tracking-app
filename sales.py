@@ -5461,11 +5461,52 @@ elif choice == "💰 Profit & Margin":
         pass
 
     # Rebate Value applies only on positive sales (avoid confusion on returns)
-    df_val["Rebate Value"] = np.where(
-        df_val[NET_COL] > 0,
-        df_val[NET_COL] * (pd.to_numeric(df_val["Rebate %"], errors="coerce").fillna(0) / 100.0),
-        0.0
+    # ============================================================
+    # ✅ CONTRACT-COMPLIANT REBATE CALCULATION (NET VALUE BASED)
+    # ============================================================
+
+    # Net Value must remain untouched (contract rule)
+    df_val[NET_COL] = pd.to_numeric(df_val[NET_COL], errors="coerce").fillna(0)
+
+    # Rebate % numeric safety
+    df_val["Rebate %"] = pd.to_numeric(
+        df_val["Rebate %"],
+        errors="coerce"
+    ).fillna(0)
+    # --- R&R mapping done above ---
+
+    
+
+    # ============================================================
+    # ✅ REBATE – STRICTLY BASED ON NET VALUE (CONTRACT RULE)
+    # ============================================================
+
+    # Safety
+    df_val[NET_COL] = pd.to_numeric(df_val[NET_COL], errors="coerce").fillna(0)
+    df_val["Rebate %"] = pd.to_numeric(df_val["Rebate %"], errors="coerce").fillna(0)
+
+    # 1️⃣ Customer-level NET VALUE (sales + returns)
+    cust_net = (
+        df_val
+        .groupby("_py_name_norm")[NET_COL]
+        .sum()
     )
+
+    # 2️⃣ Customer-level REBATE (only on net)
+    cust_rebate = (
+        cust_net *
+        (df_val.groupby("_py_name_norm")["Rebate %"].first() / 100)
+    ).fillna(0)
+
+    # 3️⃣ Map back to dataframe (same value per customer)
+    df_val["Rebate Value"] = df_val["_py_name_norm"].map(cust_rebate).fillna(0)
+
+
+    
+
+    # Audit helper flag (optional but useful)
+    df_val["Rebate Applied"] = df_val[NET_COL] > 0
+
 
     # Allocate annual rental to the selected period (by days in range), then distribute by sales share per customer
     period_days = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
@@ -5715,7 +5756,7 @@ elif choice == "💰 Profit & Margin":
                       Net_Sales=(NET_COL, "sum"),
                       Total_Cost=("Total Cost", "sum"),
                       Discount_Value=("Discount Value", "sum"),
-                      Rebate_Value=("Rebate Value", "sum"),
+                      Rebate_Value=("Rebate Value", "max"),
                       Rental_Allocated=("Allocated Rental", "sum"),
                       Effective_Profit=("Effective Profit", "sum"),
                   )
