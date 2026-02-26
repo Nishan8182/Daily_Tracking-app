@@ -63,6 +63,62 @@ import textwrap
 
 
 
+
+# ================= GLOBAL DISPLAY COLUMN RENAME MAP =================
+# NOTE: This is ONLY for table headers (display). Do NOT change calculation logic.
+COLUMN_RENAME_MAP = {
+    # Market -> Retail everywhere
+    "Market Target": "Retail Target",
+    "Market Sales": "Retail Sales",
+    "Market Balance": "Retail Balance",
+    "Market % Achieved": "Retail % Achieved",
+    "Market": "Retail",
+
+    # Billing Type codes -> Friendly names
+    "YKS1": "HHTCancel",
+    "YKS2": "WH1 Cancel",
+    "ZCAN": "WH2 Cancel",
+    "Cancel Total": "Total Cancel",
+    "YKRE": "Salesman Return",
+    "ZRE": "Presales Return",
+}
+
+def rename_col_key(col_name: str) -> str:
+    """Convert one column header to display label."""
+    try:
+        c = str(col_name).strip()
+    except Exception:
+        c = col_name
+    c = COLUMN_RENAME_MAP.get(c, c)
+    # Also replace word Market -> Retail inside longer headers (safe)
+    try:
+        c = c.replace("Market", "Retail")
+    except Exception:
+        pass
+    return c
+
+def apply_header_renames(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy with display header names applied (safe, no logic change)."""
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    out = df.copy()
+    out.columns = [rename_col_key(c) for c in out.columns]
+    return out
+
+def rename_format_keys(formats: dict | None) -> dict | None:
+    """Rename format dict keys to match renamed display columns."""
+    if not formats:
+        return formats
+    out = {}
+    for k, v in formats.items():
+        nk = rename_col_key(k)
+        # Fix common typo: '{:,0f}' -> '{:,.0f}'
+        if isinstance(v, str) and "{:,0f}" in v:
+            v = v.replace("{:,0f}", "{:,.0f}")
+        out[nk] = v
+    return out
+
+
 # --- Language Selector ---
 st.sidebar.header("Language / اللغة")
 language = st.sidebar.selectbox("Choose / اختر", ["English", "العربية"])
@@ -887,6 +943,7 @@ def render_table(df, *, formats: dict | None = None, total_row_match=None, hide_
 
     if (not is_styler) and isinstance(df, pd.DataFrame):
         df = clean_columns(df)
+        df = apply_header_renames(df)
 
         sty = df.style.set_table_styles([
             {'selector': 'th', 'props': [
@@ -909,6 +966,7 @@ def render_table(df, *, formats: dict | None = None, total_row_match=None, hide_
             sty = sty.apply(_hl, axis=1)
 
         if formats:
+            formats = rename_format_keys(formats)
             sty = sty.format(formats)
 
         st.dataframe(sty, use_container_width=True, hide_index=hide_index)
@@ -1560,20 +1618,22 @@ elif choice == texts[lang]["sales_tracking"]:
                                 return "color:#92400E; font-weight:600"
                             return "color:#991B1B; font-weight:700"
 
+                        # Apply display header renames ONLY for showing the table (no logic change)
+                        report_df_disp = apply_header_renames(report_df)
+
+                        num_cols = [
+                            "Total Target","Total Sales","Total Balance",
+                            "Market Target","Market Sales","Market Balance",
+                            "E-Com Target","E-Com Sales","E-Com Balance"
+                        ]
+                        pct_cols = ["Total % Achieved","Market % Achieved","E-Com % Achieved"]
+
                         styled = (
-                            report_df.style
+                            report_df_disp.style
                             .apply(row_style, axis=1)
-                            .format("{:,.0f}", subset=[
-                                "Total Target","Total Sales","Total Balance",
-                                "Market Target","Market Sales","Market Balance",
-                                "E-Com Target","E-Com Sales","E-Com Balance"
-                            ])
-                            .format("{:.0f}%", subset=[
-                                "Total % Achieved","Market % Achieved","E-Com % Achieved"
-                            ])
-                            .applymap(pct_color, subset=[
-                                "Total % Achieved","Market % Achieved","E-Com % Achieved"
-                            ])
+                            .format("{:,.0f}", subset=[rename_col_key(c) for c in num_cols])
+                            .format("{:.0f}%", subset=[rename_col_key(c) for c in pct_cols])
+                            .applymap(pct_color, subset=[rename_col_key(c) for c in pct_cols])
                         )
 
                         st.dataframe(styled, use_container_width=True, hide_index=True)
@@ -1732,16 +1792,13 @@ elif choice == texts[lang]["sales_tracking"]:
                         render_table(
                             sp_billing_show,
                             hide_index=True,
-                            total_row_match=lambda r: str(r.get("Branch Name", "")).strip() == "Total",
+                            total_row_match=lambda r: str(r.get("Branch Name", r.get("SP Name1", r.get("Branch", "")))).strip() == "Total",
                             formats={
                                 "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
                                 "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
                                 "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
                             }
-                        )
-
-
-                        # --- Return by Material Description ---
+                        )                        # --- Return by Material Description ---
                         st.subheader("🔄 Return Summary By SKU")
                         if "Material Description" in df_filtered.columns:
                             material_billing = df_filtered.pivot_table(
@@ -1758,33 +1815,48 @@ elif choice == texts[lang]["sales_tracking"]:
                             material_billing["Return"] = material_billing["YKRE"] + material_billing["ZRE"]
                             material_billing["Cancel Total"] = material_billing[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
                             material_billing = material_billing.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
-                            material_billing["Return %"] = np.where(material_billing["Sales Total"] != 0,
-                                                                    (material_billing["Return"] / material_billing["Sales Total"] * 100).round(0), 0)
+                            material_billing["Return %"] = np.where(
+                                material_billing["Sales Total"] != 0,
+                                (material_billing["Return"] / material_billing["Sales Total"] * 100).round(0),
+                                0
+                            )
 
-                            ordered_cols_material = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
-                                                    "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
+                            ordered_cols_material = [
+                                "Presales", "HHT", "Sales Total",
+                                "YKS1", "YKS2", "ZCAN",
+                                "Cancel Total", "YKRE", "ZRE",
+                                "Return", "Return %"
+                            ]
                             material_billing = material_billing.reindex(columns=ordered_cols_material, fill_value=0)
 
                             total_row = pd.DataFrame(material_billing.sum(numeric_only=True)).T
                             total_row.index = ["Total"]
-                            total_row["Return %"] = round((total_row["Return"]/total_row["Sales Total"]*100), 0) if total_row["Sales Total"].iloc[0] != 0 else 0
+                            total_row["Return %"] = round(
+                                (total_row["Return"] / total_row["Sales Total"] * 100), 0
+                            ) if total_row["Sales Total"].iloc[0] != 0 else 0
                             material_billing = pd.concat([material_billing, total_row])
 
+                            # ✅ Display-only header renames (no logic change)
+                            material_show = apply_header_renames(material_billing)
+
                             def highlight_total_row_material(row):
-                                return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900' if row.name == "Total" else '' for _ in row]
+                                if str(row.name).strip() == "Total":
+                                    return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900'] * len(row)
+                                return ['' for _ in row]
 
                             styled_material = (
-                                material_billing.style
+                                material_show.style
                                 .set_table_styles([
                                     {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
-                                                                ('font-weight', '800'), ('height', '40px'),
-                                                                ('line-height', '40px'), ('border', '1px solid #E5E7EB')] }
+                                                                 ('font-weight', '800'), ('height', '40px'),
+                                                                 ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
                                 ])
                                 .apply(highlight_total_row_material, axis=1)
                                 .format({
                                     "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
-                                    "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
-                                    "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
+                                    "HHTCancel": "{:,.0f}", "WH1 Cancel": "{:,.0f}", "WH2 Cancel": "{:,.0f}", "Total Cancel": "{:,.0f}",
+                                    "Salesman Return": "{:,.0f}", "Presales Return": "{:,.0f}",
+                                    "Return": "{:,.0f}", "Return %": "{:.0f}%"
                                 })
                             )
                             st.dataframe(styled_material, use_container_width=True, hide_index=False)
@@ -1803,7 +1875,6 @@ elif choice == texts[lang]["sales_tracking"]:
                                 })
                         else:
                             st.info("No 'Material Description' column found in data — skipping Material Description table.")
-
 
                         # --- Return by SP Name1 + Material Description ---
                         st.subheader("🔄 Return Summary By Branch & Product ")
@@ -1825,62 +1896,72 @@ elif choice == texts[lang]["sales_tracking"]:
                                 if col not in sp_mat_table.columns:
                                     sp_mat_table[col] = 0
 
-                            # Rename for display
+                            # Rename sales columns only (keep raw codes for logic)
                             sp_mat_table = sp_mat_table.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
-                            
-                            # Calculate totals
+
+                            # Calculate totals (logic unchanged)
                             sp_mat_table["Sales Total"] = sp_mat_table.sum(axis=1, numeric_only=True)
                             sp_mat_table["Return"] = sp_mat_table["YKRE"] + sp_mat_table["ZRE"]
                             sp_mat_table["Cancel Total"] = sp_mat_table[["YKS1", "YKS2", "ZCAN"]].sum(axis=1)
-                            sp_mat_table["Return %"] = np.where(sp_mat_table["Sales Total"] != 0,
-                                                                (sp_mat_table["Return"] / sp_mat_table["Sales Total"] * 100).round(0), 0)
+                            sp_mat_table["Return %"] = np.where(
+                                sp_mat_table["Sales Total"] != 0,
+                                (sp_mat_table["Return"] / sp_mat_table["Sales Total"] * 100).round(0),
+                                0
+                            )
 
-                            # Reorder columns
-                            ordered_cols = ["Presales", "HHT", "Sales Total", "YKS1", "YKS2", "ZCAN",
-                                            "Cancel Total", "YKRE", "ZRE", "Return", "Return %"]
-                            sp_mat_table = sp_mat_table.reindex(columns=ordered_cols, fill_value=0)
+                            # Reorder columns (raw names)
+                            ordered_cols_spm = [
+                                "Presales", "HHT", "Sales Total",
+                                "YKS1", "YKS2", "ZCAN",
+                                "Cancel Total", "YKRE", "ZRE",
+                                "Return", "Return %"
+                            ]
+                            sp_mat_table = sp_mat_table.reindex(columns=ordered_cols_spm, fill_value=0)
 
                             # Add total row
                             total_row = pd.DataFrame(sp_mat_table.sum(numeric_only=True)).T
                             total_row.index = [("Total", "")]
-                            total_row["Return %"] = round((total_row["Return"] / total_row["Sales Total"] * 100), 0) if total_row["Sales Total"].iloc[0]!=0 else 0
+                            total_row["Return %"] = round(
+                                (total_row["Return"] / total_row["Sales Total"] * 100), 0
+                            ) if total_row["Sales Total"].iloc[0] != 0 else 0
                             sp_mat_table = pd.concat([sp_mat_table, total_row])
 
-                            # Highlighting function
+                            # ✅ Display-only header renames (no logic change)
+                            sp_mat_show = apply_header_renames(sp_mat_table)
+
                             def highlight_sp_mat(row):
                                 styles = []
                                 for col in row.index:
                                     if row.name == ("Total", ""):
                                         styles.append('background-color: #BFDBFE; color: #1E3A8A; font-weight: 900')
-                                    elif col == "Return" and row[col] > 0:
-                                        styles.append('background-color: #FECACA; color: #991B1B; font-weight: 700')  # highlight returns
-                                    elif col == "Cancel Total" and row[col] > 0:
-                                        styles.append('background-color: #FDE68A; color: #92400E; font-weight: 700')  # highlight cancels
-                                    elif col == "Sales Total" and row[col] > 0:
-                                        styles.append('background-color: #D1FAE5; color: #065F46; font-weight: 700')  # highlight sales
+                                    elif col == "Return" and row.get(col, 0) != 0:
+                                        styles.append('background-color: #FECACA; color: #991B1B; font-weight: 700')
+                                    elif col == "Total Cancel" and row.get(col, 0) != 0:
+                                        styles.append('background-color: #FDE68A; color: #92400E; font-weight: 700')
+                                    elif col == "Sales Total" and row.get(col, 0) != 0:
+                                        styles.append('background-color: #D1FAE5; color: #065F46; font-weight: 700')
                                     else:
                                         styles.append('')
                                 return styles
 
-                            # Style the table
                             styled_sp_mat = (
-                                sp_mat_table.style
+                                sp_mat_show.style
                                 .set_table_styles([
                                     {'selector': 'th', 'props': [('background', '#1E3A8A'), ('color', 'white'),
-                                                                ('font-weight', '800'), ('height', '40px'),
-                                                                ('line-height', '40px'), ('border', '1px solid #E5E7EB')] }
+                                                                 ('font-weight', '800'), ('height', '40px'),
+                                                                 ('line-height', '40px'), ('border', '1px solid #E5E7EB')]}
                                 ])
                                 .apply(highlight_sp_mat, axis=1)
                                 .format({
                                     "Presales": "{:,.0f}", "HHT": "{:,.0f}", "Sales Total": "{:,.0f}",
-                                    "YKS1": "{:,.0f}", "YKS2": "{:,.0f}", "ZCAN": "{:,.0f}", "Cancel Total": "{:,.0f}",
-                                    "YKRE": "{:,.0f}", "ZRE": "{:,.0f}", "Return": "{:,.0f}", "Return %": "{:.0f}%"
+                                    "HHTCancel": "{:,.0f}", "WH1 Cancel": "{:,.0f}", "WH2 Cancel": "{:,.0f}", "Total Cancel": "{:,.0f}",
+                                    "Salesman Return": "{:,.0f}", "Presales Return": "{:,.0f}",
+                                    "Return": "{:,.0f}", "Return %": "{:.0f}%"
                                 })
                             )
 
                             st.dataframe(styled_sp_mat, use_container_width=True, hide_index=True)
 
-                            # Download button
                             if st.download_button(
                                 texts[lang].get("download_sp_material", "Download Return by SP+Material"),
                                 data=to_excel_bytes(sp_mat_table.reset_index(), sheet_name="Return_by_SP_Material", index=False),
@@ -1895,6 +1976,7 @@ elif choice == texts[lang]["sales_tracking"]:
                                 })
                         else:
                             st.info("Required columns are missing in your data for SP+Material table.")
+
                             
                             
 
