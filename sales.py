@@ -58,6 +58,10 @@ from fuzzywuzzy import fuzz
 from io import BytesIO
 import urllib.parse
 from datetime import date
+import streamlit.components.v1 as components
+import textwrap
+
+
 
 # --- Language Selector ---
 st.sidebar.header("Language / اللغة")
@@ -83,7 +87,7 @@ if lang == "ar":
 
 texts = {
     "en": {
-        "page_title": "📊 Haneef Data Dashboard",
+        "page_title": "📊 Khazan Dashboard",
         "layout": "wide",
         "page_icon": "📈",
         "welcome": "Welcome {0} 👋",
@@ -119,8 +123,8 @@ texts = {
         "rfm_cohort_download": "Download Cohort Report (Excel)",
         "rfm_cohort_no_data": "Insufficient data for cohort analysis.",
         "product_availability_checker": "Product Availability Checker",
-        "home_title": "🏠 Haneef Data Dashboard",
-        "home_welcome": "**Welcome to your Sales Analytics Hub!**\n- 📈 Track sales & targets by salesman, By Customer Name, By Branch Name\n- 📊 Visualize trends with interactive charts (now with advanced forecasting)\n- 💾 Download reports in PPTX & Excel\n- 📅 Compare sales across custom periods\n- 🎯 Allocate SP/PY targets based on recent performance\nUse the sidebar to navigate and upload data once.",
+        "home_title": "🏠 Khazan Dashboard",
+        "home_welcome": "**Welcome to your Sales Analytical Hub!**\n- 📈 Track Sales&Targets By Salesman, By Customer, By Branch Name\n- 📅 Sales Comparision\n- 📊 Visualize Trends With Interactive Charts (With Forecaste)\n- 🎯 Allocate Customer Monthly Target \n- 💾 Download reports in PPT & Excel",
         "data_loaded_msg": "Data is loaded — choose a page from the menu.",
         "upload_prompt": "Please upload your Excel file in the sidebar to start.",
         "sales_tracking_title": "📊 MTD Tracking",
@@ -155,7 +159,7 @@ texts = {
         "talabat_gap": "Talabat Gap",
         "channel_sales_sub": "📊 Channel Sales",
         "retail_sales": "Retail Sales",
-        "of_total_ka": "{0:.0f}% of Total KA Sales",
+        "of_total_ka": "{0:.0f}% of Sales",
         "ecom_sales": "E-com Sales",
         "performance_metrics_sub": "📈 Performance Metrics",
         "days_finished": "Days Finished (working)",
@@ -163,7 +167,7 @@ texts = {
         "forecast_month_end": "Forecasted Month-End KA Sales",
         "sales_targets_summary_sub": "📋 Sales & Targets Summary-Value",
         "download_sales_targets": "⬇️ Download Sales & Targets Summary (Excel)",
-        "sales_by_billing_sub": "📊 Sales By Billing Type-Value",
+        "sales_by_billing_sub": "📊 Billing Type - Sales - Cancellation And Return ( KWD )",
         "download_billing": "⬇️ Download Billing Type Table (Excel)",
         "sales_by_py_sub": "🏬 Sales Summary By Customer-Value",
         "download_py": "⬇️ Download PY Name Table (Excel)",
@@ -321,7 +325,7 @@ texts = {
         "tables_tab": "📋 الجداول",
         "charts_tab": "📊 الرسوم البيانية",
         "downloads_tab": "💾 التنزيلات",
-        "key_metrics_sub": "🏆 المقاييس الرئيسية",
+        "key_matrix_sub": "🏆 المقاييس الرئيسية",
         "total_ka_sales": "إجمالي مبيعات KA",
         "of_ka_target": "{0:.0f}% من هدف KA المحقق",
         "ka_other_ecom": "KA و E-com أخرى",
@@ -1279,27 +1283,88 @@ elif choice == texts[lang]["sales_tracking"]:
 
                 tabs = st.tabs([texts[lang]["kpis_tab"], texts[lang]["tables_tab"], texts[lang]["charts_tab"], texts[lang]["downloads_tab"]])
 
-                # --- KPIs with progress bars ---
+ # --- KPIs with progress bars ---
                 with tabs[0]:
                     st.subheader(texts[lang]["key_metrics_sub"])
-                    r1c1 = st.columns(1)[0]
-                    with r1c1:
-                        st.metric(texts[lang]["total_ka_sales"], f"KD {total_sales.sum():,.0f}")
-                        progress_pct_ka = (total_sales.sum() / total_ka_target_all * 100) if total_ka_target_all > 0 else 0
-                        st.markdown(create_progress_bar_html(progress_pct_ka), unsafe_allow_html=True)
-                        st.markdown(f'<div class="green-caption">{texts[lang]["of_ka_target"].format(progress_pct_ka)}</div>', unsafe_allow_html=True)
 
+                    # ROW 1: Big KPI (Full width)
+                    r1c1 = st.columns(1)[0]
+
+                    with r1c1:
+                        DATE_COL = "Billing Date"
+                        _d = df_filtered.copy()
+                        _d[DATE_COL] = pd.to_datetime(_d[DATE_COL], errors="coerce")
+
+                        from_dt = _d[DATE_COL].min()
+                        to_dt   = _d[DATE_COL].max()
+
+                        from_txt = from_dt.strftime("%d %b %Y") if pd.notna(from_dt) else "-"
+                        to_txt   = to_dt.strftime("%d %b %Y") if pd.notna(to_dt) else "-"
+
+                        ka_sales_value = float(total_sales.sum()) if total_sales is not None else 0.0
+
+                      
+                        # --- Total KA Sales card (FULL width + date inside) ---
+                        st.markdown(
+                            """
+                            <style>
+                            /* Force full width */
+                            .metric-card {width:100% !important; max-width:100% !important; display:block !important; box-sizing:border-box;}
+                            </style>
+                            """,
+                            unsafe_allow_html=True
+                        )
+
+                        card_html = (
+                            f'<div style="'
+                            f'border:2px solid #38BDF8;'
+                            f'border-radius:18px;'
+                            f'padding:12px 16px;'
+                            f'background: linear-gradient(180deg, #FFFFFF, #F0F9FF);'
+                            f'box-shadow:0 10px 22px rgba(56,189,248,0.25);'
+                            f'width:100%;'
+                            f'box-sizing:border-box;'
+                            f'">'
+                            f'<div style="font-size:18px;font-weight:700;color:#0F172A;margin-bottom:8px;">{texts[lang]["total_ka_sales"]}</div>'
+                            f'<div style="font-size:44px;font-weight:900;color:#111827;line-height:1.1;margin-bottom:14px;">KD {ka_sales_value:,.0f}</div>'
+                            f'<div style="display:flex;justify-content:space-between;font-size:13px;color:#334155;opacity:0.9;">'
+                            f'<span><b>From:</b> {from_txt}</span>'
+                            f'<span><b>To:</b> {to_txt}</span>'
+                            f'</div>'
+                            f'</div>'
+                        )
+
+                        st.markdown(card_html, unsafe_allow_html=True)
+
+                        # Progress bar (will now visually match because card is full width)
+                        progress_pct_ka = (ka_sales_value / total_ka_target_all * 100) if total_ka_target_all > 0 else 0
+                        st.markdown(create_progress_bar_html(progress_pct_ka), unsafe_allow_html=True)
+                        st.markdown(
+                            f'<div class="green-caption">{texts[lang]["of_ka_target"].format(progress_pct_ka)}</div>',
+                            unsafe_allow_html=True
+                        )
+
+                    # ROW 2: Two KPIs (Side by side)  ✅ MUST be outside r1c1
                     r2c1, r2c2 = st.columns(2)
+
                     with r2c1:
                         st.metric(texts[lang]["ka_other_ecom"], f"KD {ka_other_ecom_sales:,.0f}")
                         st.markdown(create_progress_bar_html(ka_other_ecom_pct), unsafe_allow_html=True)
-                        st.markdown(f'<div class="green-caption">{texts[lang]["of_ka_target_pct"].format(ka_other_ecom_pct)}</div>', unsafe_allow_html=True)
+                        st.markdown(
+                            f'<div class="green-caption">{texts[lang]["of_ka_target_pct"].format(ka_other_ecom_pct)}</div>',
+                            unsafe_allow_html=True
+                        )
+
                     with r2c2:
                         st.metric(texts[lang]["talabat_sales"], f"KD {talabat_sales.sum():,.0f}")
                         progress_pct_talabat = (talabat_sales.sum() / total_tal_target_all * 100) if total_tal_target_all > 0 else 0
                         st.markdown(create_progress_bar_html(progress_pct_talabat), unsafe_allow_html=True)
-                        st.markdown(f'<div class="green-caption">{texts[lang]["of_talabat_target"].format(progress_pct_talabat)}</div>', unsafe_allow_html=True)
+                        st.markdown(
+                            f'<div class="green-caption">{texts[lang]["of_talabat_target"].format(progress_pct_talabat)}</div>',
+                            unsafe_allow_html=True
+                        )
 
+                    # ---- Rest stays same (Target Overview etc.) ----
                     st.subheader(texts[lang]["target_overview_sub"])
                     r3c1, r3c2, r3c3, r3c4 = st.columns(4)
                     r3c1.metric(texts[lang]["ka_target"], f"KD {total_ka_target_all:,.0f}")
@@ -1323,7 +1388,8 @@ elif choice == texts[lang]["sales_tracking"]:
                     r5c1.metric(texts[lang]["days_finished"], days_finish)
                     r5c2.metric(texts[lang]["current_sales_per_day"], f"KD {current_sales_per_day:,.0f}")
                     r5c3.metric(texts[lang]["forecast_month_end"], f"KD {forecast_month_end_ka:,.0f}")
-
+                    
+                    
                     # --- TABLES ---
                     with tabs[1]:
 
@@ -1640,7 +1706,7 @@ elif choice == texts[lang]["sales_tracking"]:
 
 
                         # --- Return by SP Name1 ---
-                        st.subheader("🔄 Return Summary By Branch-Value")
+                        st.subheader("🔄 Sales Vs Return's Summary By Branch-Value")
                         sp_billing = df_filtered.pivot_table(
                             index="SP Name1",
                             columns="Billing Type",
@@ -1676,7 +1742,7 @@ elif choice == texts[lang]["sales_tracking"]:
 
 
                         # --- Return by Material Description ---
-                        st.subheader("🔄 Return Summary By Product")
+                        st.subheader("🔄 Return Summary By SKU")
                         if "Material Description" in df_filtered.columns:
                             material_billing = df_filtered.pivot_table(
                                 index="Material Description",
@@ -1961,7 +2027,7 @@ elif choice == texts[lang]["sales_tracking"]:
                         # 🛵 Talabat – DISPLAY (your same style)
                         # ------------------------------------------------
                         st.markdown("---")
-                        st.subheader("🛵 Talabat – Billing Type Split (ZFR / HHT / Returns)")
+                        st.subheader("🛵 Talabat -( Sales  / Returns / Cancellation  )- ( By Billing Type )")
 
                         if isinstance(talabat_billing_split, pd.DataFrame) and (not talabat_billing_split.empty):
                             st.dataframe(
@@ -3842,7 +3908,7 @@ elif choice == "SP/PY Target Allocation":
 
 # --- AI Insights Page (New GM Executive View) ---
 elif choice == "AI Insights":
-    st.title("🤖 AI Insights – GM Executive View")
+    st.title("🤖 AI Insights – Over All KA View")
 
     if "data_loaded" not in st.session_state:
         st.warning("⚠️ Please upload the Excel file first.")
@@ -6017,13 +6083,41 @@ if choice == "🧭 Management Command Center":
     # ================= 1️⃣ EXECUTIVE DASHBOARD =================
     st.subheader("1️⃣ Executive RAG Dashboard (Daily Pace)")
 
+    # ─── Get Date Range From Current Data ─────────────────────
+    DATE_COL = "Billing Date"   # change only if column name different
+
+    df_dates = df.copy()
+    df_dates[DATE_COL] = pd.to_datetime(df_dates[DATE_COL], errors="coerce")
+
+    from_dt = df_dates[DATE_COL].min()
+    to_dt   = df_dates[DATE_COL].max()
+
+    from_txt = from_dt.strftime("%d %b %Y") if pd.notna(from_dt) else "-"
+    to_txt   = to_dt.strftime("%d %b %Y") if pd.notna(to_dt) else "-"
+
+    # ─── KPI Columns ───────────────────────────────────────────
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total KA Sales", f"KD {total_sales:,.0f}")
+
+    # ---- Total Sales KPI
+    c1.metric("Total Sales", f"KD {total_sales:,.0f}")
+
+    # ---- Date range below KPI (Left = From, Right = To)
+    c1.markdown(
+        f"""
+        <div style="display:flex;justify-content:space-between;
+                    font-size:12px;margin-top:-8px;color:#334155;">
+            <span><b>From:</b> {from_txt}</span>
+            <span><b>To:</b> {to_txt}</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # ---- Other KPIs
     c2.metric("Total KA Target", f"KD {total_ka_target:,.0f}")
     c3.metric("KA Target / Day", f"KD {ka_target_per_day:,.0f}")
     c4.metric("KA Actual / Day", f"KD {ka_actual_per_day:,.0f}")
     c5.metric("Overall KA Status", overall_ka_status)
-
     # ================= 2️⃣ SALESMAN TABLE =================
     st.subheader("2️⃣ Salesman Performance")
 
