@@ -64,6 +64,8 @@ import textwrap
 
 
 
+
+
 # ================= GLOBAL DISPLAY COLUMN RENAME MAP =================
 # NOTE: This is ONLY for table headers (display). Do NOT change calculation logic.
 COLUMN_RENAME_MAP = {
@@ -218,7 +220,7 @@ texts = {
         "of_total_ka": "{0:.0f}% of Sales",
         "ecom_sales": "E-com Sales",
         "performance_metrics_sub": "📈 Performance Metrics",
-        "days_finished": "Days Finished (working)",
+        "days_finished": "Days Elapsed",
         "current_sales_per_day": "Current Sales Per Day",
         "forecast_month_end": "Forecasted Month-End KA Sales",
         "sales_targets_summary_sub": "📋 Sales & Targets Summary-Value",
@@ -3988,554 +3990,919 @@ elif choice == "SP/PY Target Allocation":
             "timestamp": datetime.now()
         })
 
-# --- AI Insights Page (New GM Executive View) ---
+# --- AI Insights Page (GM Executive View - Reset) ---
+    def gm_tag(return_pct, cancel_pct):
+        if return_pct >= 4:
+            return "🔴 High Return"
+        if cancel_pct >= 4:
+            return "🟠 High Cancel"
+        if return_pct >= 2 or cancel_pct >= 2:
+            return "🟡 Watch"
+        return "🟢 Normal"
+    
+# --- AI Insights Page (GM Executive View - No Duplicate Key Metrics) ---
 elif choice == "AI Insights":
-    st.title("🤖 AI Insights – Over All KA View")
+    st.title("🧠 GM Insights – Executive View")
 
     if "data_loaded" not in st.session_state:
         st.warning("⚠️ Please upload the Excel file first.")
     else:
+        import calendar
+
         # ------------------------------------------------
         # 1) Base Data
         # ------------------------------------------------
         sales_df = st.session_state["sales_df"].copy()
-        target_df = st.session_state["target_df"].copy()
-        ytd_df = st.session_state.get("ytd_df", pd.DataFrame()).copy()
+        target_df = st.session_state.get("target_df", pd.DataFrame()).copy()
         channels_df = st.session_state.get("channels_df", pd.DataFrame()).copy()
 
-        # Helper
+        # Ensure date
+        if "Billing Date" in sales_df.columns:
+            sales_df["Billing Date"] = pd.to_datetime(sales_df["Billing Date"], errors="coerce")
+
         def fmt_kd(x):
             try:
-                return f"KD {x:,.0f}"
+                return f"KD {float(x):,.0f}"
             except Exception:
                 return "KD 0"
 
-        # ------------------------------------------------
-        # 2) Scope & Filters
-        # ------------------------------------------------
-        st.subheader("🎛 Scope & Filters")
+        # ✅ Local helper (fix NameError)
+        def gm_tag(return_pct, cancel_pct):
+            try:
+                return_pct = float(return_pct)
+                cancel_pct = float(cancel_pct)
+            except Exception:
+                return "🟢 Normal"
 
-        colf1, colf2 = st.columns(2)
-        with colf1:
-            min_date = pd.to_datetime(sales_df["Billing Date"].min())
-            max_date = pd.to_datetime(sales_df["Billing Date"].max())
-            date_range_ai = st.date_input(
-                "Select analysis period",
-                value=(min_date, max_date)
+            if return_pct >= 4:
+                return "🔴 High Return"
+            if cancel_pct >= 4:
+                return "🟠 High Cancel"
+            if return_pct >= 2 or cancel_pct >= 2:
+                return "🟡 Watch"
+            return "🟢 Normal"
+
+        # ------------------------------------------------
+        # 2) Filters
+        # ------------------------------------------------
+        st.subheader("🎛 GM Scope")
+
+        min_date = pd.to_datetime(sales_df["Billing Date"].min())
+        max_date = pd.to_datetime(sales_df["Billing Date"].max())
+
+        f1, f2, f3 = st.columns([2, 1, 2])
+        with f1:
+            date_range = st.date_input(
+                "Select GM period",
+                value=(min_date.date(), max_date.date())
             )
+        with f2:
+            top_n = st.slider("Top N", 3, 15, 5, 1)
+        with f3:
+            sm_list = []
+            if "Driver Name EN" in sales_df.columns:
+                sm_list = sorted([x for x in sales_df["Driver Name EN"].dropna().unique()])
+            selected_sm = st.multiselect("Salesmen (optional)", sm_list, default=[])
 
-        with colf2:
-            top_n_ai = st.slider("Top-N salesmen spotlight (for GM notes)", min_value=3, max_value=15, value=5, step=1)
-
-        if isinstance(date_range_ai, (list, tuple)) and len(date_range_ai) == 2:
-            ai_start, ai_end = pd.to_datetime(date_range_ai[0]), pd.to_datetime(date_range_ai[1])
+        if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+            start = pd.to_datetime(date_range[0])
+            end = pd.to_datetime(date_range[1])
         else:
-            ai_start, ai_end = min_date, max_date
+            start, end = min_date, max_date
 
-        df_ai = sales_df[(sales_df["Billing Date"] >= ai_start) & (sales_df["Billing Date"] <= ai_end)].copy()
+        df = sales_df[(sales_df["Billing Date"] >= start) & (sales_df["Billing Date"] <= end)].copy()
 
-        if df_ai.empty:
-            st.info("No data in the selected period. Try expanding the date range.")
+        if selected_sm and "Driver Name EN" in df.columns:
+            df = df[df["Driver Name EN"].isin(selected_sm)].copy()
+
+        if df.empty:
+            st.info("No data in selected period.")
             st.stop()
 
         # ------------------------------------------------
-        # 3) Core KPIs for GM (Sales, Targets, Channels, Returns)
+        # 3) Billing Types & Core GM numbers
+        # ------------------------------------------------
+        SALES_BT  = {"ZFR", "YKF2"}              # Sales only (Presales + HHT)
+        RETURN_BT = {"YKRE", "ZRE"}              # Returns
+        CANCEL_BT = {"YKS1", "YKS2", "ZCAN"}     # Cancels
+
+        if "Billing Type" not in df.columns:
+            df["Billing Type"] = ""
+        df["Billing Type"] = df["Billing Type"].astype(str).str.upper().str.strip()
+
+        sales_val = float(df[df["Billing Type"].isin(SALES_BT)]["Net Value"].sum())
+        returns_raw = float(df[df["Billing Type"].isin(RETURN_BT)]["Net Value"].sum())
+        cancel_raw  = float(df[df["Billing Type"].isin(CANCEL_BT)]["Net Value"].sum())
+
+        # Make effect negative for Net Sales (safe even if data has positive values)
+        returns_effect = returns_raw if returns_raw < 0 else -abs(returns_raw)
+        cancel_effect  = cancel_raw  if cancel_raw  < 0 else -abs(cancel_raw)
+
+        net_sales = sales_val + returns_effect + cancel_effect
+        returns_val = abs(returns_raw)
+        cancel_val = abs(cancel_raw)
+
+        return_pct = (returns_val / sales_val * 100) if sales_val else 0
+        cancel_pct = (cancel_val / sales_val * 100) if sales_val else 0
+
+        # ------------------------------------------------
+        # 4) Retail vs E-com mix (Sales only)
+        # ------------------------------------------------
+        retail_sales = 0.0
+        ecom_sales = 0.0
+
+        if (not channels_df.empty) and {"PY Name 1", "Channels"}.issubset(channels_df.columns) and "PY Name 1" in df.columns:
+            tmp = df[df["Billing Type"].isin(SALES_BT)].copy()
+
+            tmp["_py_norm"] = tmp["PY Name 1"].astype(str).str.strip().str.lower()
+            ch = channels_df.copy()
+            ch["_py_norm"] = ch["PY Name 1"].astype(str).str.strip().str.lower()
+
+            tmp = tmp.merge(ch[["_py_norm", "Channels"]], on="_py_norm", how="left")
+            tmp["Channels"] = tmp["Channels"].astype(str).str.lower().str.strip()
+            tmp.loc[tmp["Channels"].isin(["", "nan", "none"]), "Channels"] = "retail"
+
+            e_mask = tmp["Channels"].str.contains("e-com|ecom|ecommerce|online|talabat", regex=True, na=False)
+            ecom_sales = float(tmp[e_mask]["Net Value"].sum())
+            retail_sales = float(tmp[~e_mask]["Net Value"].sum())
+        else:
+            # fallback
+            retail_sales = float(df[df["Billing Type"].isin(SALES_BT)]["Net Value"].sum())
+            ecom_sales = 0.0
+
+        mix_total = retail_sales + ecom_sales
+        retail_mix = (retail_sales / mix_total * 100) if mix_total else 0
+        ecom_mix   = (ecom_sales / mix_total * 100) if mix_total else 0
+
+        # ------------------------------------------------
+        # 5) GM Header (Status line)
+        # ------------------------------------------------
+        active_sm = df["Driver Name EN"].dropna().nunique() if "Driver Name EN" in df.columns else 0
+        status = "🟢 Stable" if (return_pct < 3 and cancel_pct < 3) else "🟠 Needs Attention" if (return_pct < 5 and cancel_pct < 5) else "🔴 At Risk"
+
+        st.markdown(
+            f"**Period:** {start.date()} → {end.date()}  |  "
+            f"**Active Salesmen:** {active_sm}  |  "
+            f"**Status:** {status}"
+        )
+
+        # ------------------------------------------------
+        # 6) GM KPIs (No duplicate Key Metrics)
         # ------------------------------------------------
         st.markdown("---")
-        st.subheader("📊 GM Snapshot – Key KPIs")
+        st.subheader("📊 GM Executive KPIs")
 
-        total_sales = float(df_ai["Net Value"].sum())
-
-        # Targets by salesman (KA + Talabat)
-        if "Driver Name EN" in target_df.columns:
-            ka_targets = target_df.set_index("Driver Name EN")["KA Target"] if "KA Target" in target_df.columns else pd.Series(dtype=float)
-            tal_targets = target_df.set_index("Driver Name EN")["Talabat Target"] if "Talabat Target" in target_df.columns else pd.Series(dtype=float)
-        else:
-            ka_targets = pd.Series(dtype=float)
-            tal_targets = pd.Series(dtype=float)
-
-        # Sales by salesman (filtered period)
-        sales_by_sm = df_ai.groupby("Driver Name EN")["Net Value"].sum()
-
-        # Talabat sales (treated as E-Com – customer name match)
-        tal_mask = df_ai["PY Name 1"].astype(str).str.upper().str.contains("STORES SERVICES KUWAIT CO.")
-        tal_sales_by_sm = df_ai[tal_mask].groupby("Driver Name EN")["Net Value"].sum() if tal_mask.any() else pd.Series(dtype=float)
-
-        # Align indices
-        idx_union = sales_by_sm.index.union(ka_targets.index).union(tal_targets.index).union(tal_sales_by_sm.index)
-        sales_by_sm = sales_by_sm.reindex(idx_union, fill_value=0.0)
-        ka_targets = ka_targets.reindex(idx_union, fill_value=0.0)
-        tal_targets = tal_targets.reindex(idx_union, fill_value=0.0)
-        tal_sales_by_sm = tal_sales_by_sm.reindex(idx_union, fill_value=0.0)
-
-        # Only count targets for salesmen who have sales in this period
-        active_sm = sales_by_sm[sales_by_sm > 0].index.tolist()
-        active_ka_target = float(ka_targets.loc[active_sm].sum()) if len(active_sm) > 0 else 0.0
-        active_tal_target = float(tal_targets.loc[active_sm].sum()) if len(active_sm) > 0 else 0.0
-
-        total_tal_sales = float(tal_sales_by_sm.sum())
-
-        ka_ach_pct = (total_sales / active_ka_target * 100) if active_ka_target > 0 else 0
-        tal_ach_pct = (total_tal_sales / active_tal_target * 100) if active_tal_target > 0 else 0
-
-        # Channels: Market vs E-com (sales channels sheet)
-        total_ecom = 0.0
-        total_market = 0.0
-        if not channels_df.empty and {"PY Name 1", "Channels"}.issubset(channels_df.columns):
-            df_py_sales_ai = df_ai.groupby("PY Name 1")["Net Value"].sum().reset_index()
-            df_ch_merge = df_py_sales_ai.merge(
-                channels_df[["PY Name 1", "Channels"]],
-                on="PY Name 1",
-                how="left"
-            )
-            df_ch_merge["Channels"] = df_ch_merge["Channels"].astype(str).str.strip().str.lower().fillna("market")
-            ch_sales = df_ch_merge.groupby("Channels")["Net Value"].sum()
-            total_ecom = float(ch_sales.get("e-com", 0.0))
-            total_market = float(ch_sales.sum() - total_ecom)
-
-        total_channels = total_market + total_ecom
-        ecom_pct = (total_ecom / total_channels * 100) if total_channels > 0 else 0
-        market_pct = (total_market / total_channels * 100) if total_channels > 0 else 0
-
-        # Returns (YKRE + ZRE)
-        if "Billing Type" in df_ai.columns:
-            returns_df = df_ai[df_ai["Billing Type"].isin(["YKRE", "ZRE"])]
-            total_returns = float(returns_df["Net Value"].sum())
-        else:
-            total_returns = 0.0
-        returns_pct = (total_returns / total_sales * 100) if total_sales > 0 else 0
-
-        # KPI cards
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Total Sales", fmt_kd(total_sales))
-        k2.metric("KA Achievement %", f"{ka_ach_pct:.0f}%" if active_ka_target > 0 else "N/A")
-        k3.metric("Talabat Achievement %", f"{tal_ach_pct:.0f}%" if active_tal_target > 0 else "N/A")
-        k4.metric("Returns % of Sales", f"{returns_pct:.1f}%" if total_sales > 0 else "N/A")
+        k1.metric("Net Sales", fmt_kd(net_sales))
+        k2.metric("Return Rate %", f"{return_pct:.1f}%")
+        k3.metric("Cancel Rate %", f"{cancel_pct:.1f}%")
+        k4.metric("Retail / E-Com Mix", f"{retail_mix:.0f}% / {ecom_mix:.0f}%")
 
+        # ------------------------------------------------
+        # 7) LY same dates + Forecast month end + YTD vs LY + Forecast year end
+        # ------------------------------------------------
+        def _sales_sum(df_):
+            if df_.empty:
+                return 0.0
+            if "Billing Type" in df_.columns:
+                _tmp = df_.copy()
+                _tmp["Billing Type"] = _tmp["Billing Type"].astype(str).str.upper().str.strip()
+                return float(_tmp[_tmp["Billing Type"].isin(SALES_BT)]["Net Value"].sum())
+            return float(df_["Net Value"].sum())
+
+        cur_start = pd.to_datetime(start)
+        cur_end   = pd.to_datetime(end)
+
+        # Same date-to-date last year
+        ly_start = cur_start - pd.DateOffset(years=1)
+        ly_end   = cur_end   - pd.DateOffset(years=1)
+
+        cur_period_sales = _sales_sum(sales_df[(sales_df["Billing Date"] >= cur_start) & (sales_df["Billing Date"] <= cur_end)])
+        ly_period_sales  = _sales_sum(sales_df[(sales_df["Billing Date"] >= ly_start) & (sales_df["Billing Date"] <= ly_end)])
+
+        # Month forecast
+        month_start = cur_end.replace(day=1)
+        days_in_month = calendar.monthrange(cur_end.year, cur_end.month)[1]
+        month_end = cur_end.replace(day=days_in_month)
+
+        mtd_df = sales_df[(sales_df["Billing Date"] >= month_start) & (sales_df["Billing Date"] <= cur_end)].copy()
+        mtd_sales = _sales_sum(mtd_df)
+
+        mtd_days_with_data = int(mtd_df["Billing Date"].dt.date.nunique()) if not mtd_df.empty else 0
+        if mtd_days_with_data > 0:
+            forecast_month_end = (mtd_sales / mtd_days_with_data) * days_in_month
+        else:
+            forecast_month_end = 0.0
+
+        # YTD vs LY
+        ytd_start = cur_end.replace(month=1, day=1)
+        ly_ytd_start = (cur_end - pd.DateOffset(years=1)).replace(month=1, day=1)
+        ly_ytd_end = cur_end - pd.DateOffset(years=1)
+
+        ytd_sales = _sales_sum(sales_df[(sales_df["Billing Date"] >= ytd_start) & (sales_df["Billing Date"] <= cur_end)])
+        ly_ytd_sales = _sales_sum(sales_df[(sales_df["Billing Date"] >= ly_ytd_start) & (sales_df["Billing Date"] <= ly_ytd_end)])
+
+        # Year forecast
+        is_leap = (cur_end.year % 4 == 0 and cur_end.year % 100 != 0) or (cur_end.year % 400 == 0)
+        days_in_year = 366 if is_leap else 365
+
+        ytd_df_range = sales_df[(sales_df["Billing Date"] >= ytd_start) & (sales_df["Billing Date"] <= cur_end)].copy()
+        ytd_days_with_data = int(ytd_df_range["Billing Date"].dt.date.nunique()) if not ytd_df_range.empty else 0
+
+        if ytd_days_with_data > 0:
+            forecast_year_end = (ytd_sales / ytd_days_with_data) * days_in_year
+        else:
+            forecast_year_end = 0.0
+
+        # ------------------------------------------------
+        # 7) GM Comparison & Forecast (FIXED using YTD sheet)
+        # ------------------------------------------------
+        st.markdown("---")
+        st.subheader("📌 GM Comparison & Forecast")
+
+        # ✅ Use YTD sheet for history if available, else fallback to sales_df
+        ytd_df = st.session_state.get("ytd_df", pd.DataFrame()).copy()
+        src = ytd_df if (not ytd_df.empty and "Billing Date" in ytd_df.columns and "Net Value" in ytd_df.columns) else sales_df
+
+        # Ensure date + numeric
+        src["Billing Date"] = pd.to_datetime(src["Billing Date"], errors="coerce")
+        src["Net Value"] = pd.to_numeric(src["Net Value"], errors="coerce").fillna(0)
+
+        # IMPORTANT:
+        # - YTD sheet usually already contains "Net Value" final numbers (no billing type split)
+        # - So for comparisons/forecasts, use Net Value sum directly.
+        def sum_value(df_):
+            if df_.empty:
+                return 0.0
+            return float(df_["Net Value"].sum())
+
+        cur_start = pd.to_datetime(start)
+        cur_end   = pd.to_datetime(end)
+
+        # Same date-to-date last year (from YTD sheet)
+        ly_start = cur_start - pd.DateOffset(years=1)
+        ly_end   = cur_end   - pd.DateOffset(years=1)
+
+        cur_period_val = sum_value(src[(src["Billing Date"] >= cur_start) & (src["Billing Date"] <= cur_end)])
+        ly_period_val  = sum_value(src[(src["Billing Date"] >= ly_start) & (src["Billing Date"] <= ly_end)])
+
+        # ---- Month forecast (if month already completed => forecast = actual month) ----
+        month_start = cur_end.replace(day=1)
+        days_in_month = calendar.monthrange(cur_end.year, cur_end.month)[1]
+        month_end = cur_end.replace(day=days_in_month)
+
+        month_actual = sum_value(src[(src["Billing Date"] >= month_start) & (src["Billing Date"] <= month_end)])
+        mtd_actual   = sum_value(src[(src["Billing Date"] >= month_start) & (src["Billing Date"] <= cur_end)])
+
+        elapsed_days = (cur_end.date() - month_start.date()).days + 1  # calendar elapsed days
+
+        if cur_end.date() >= month_end.date():
+            forecast_month_end = month_actual   # ✅ month finished
+        else:
+            forecast_month_end = (mtd_actual / elapsed_days) * days_in_month if elapsed_days > 0 else 0.0
+
+        # ---- YTD vs LY (Jan 1 -> current end) ----
+        ytd_start = cur_end.replace(month=1, day=1)
+        ly_ytd_start = (cur_end - pd.DateOffset(years=1)).replace(month=1, day=1)
+        ly_ytd_end   = cur_end - pd.DateOffset(years=1)
+
+        ytd_val    = sum_value(src[(src["Billing Date"] >= ytd_start) & (src["Billing Date"] <= cur_end)])
+        ly_ytd_val = sum_value(src[(src["Billing Date"] >= ly_ytd_start) & (src["Billing Date"] <= ly_ytd_end)])
+
+        # ---- Year forecast (if year finished => forecast = actual YTD) ----
+        is_leap = (cur_end.year % 4 == 0 and cur_end.year % 100 != 0) or (cur_end.year % 400 == 0)
+        days_in_year = 366 if is_leap else 365
+
+        day_of_year = (cur_end.date() - ytd_start.date()).days + 1  # calendar YTD days
+
+        if cur_end.month == 12 and cur_end.day == 31:
+            forecast_year_end = ytd_val  # ✅ year finished
+        else:
+            forecast_year_end = (ytd_val / day_of_year) * days_in_year if day_of_year > 0 else 0.0
+
+        # ---- Cards ----
+        g1, g2, g3, g4 = st.columns(4)
+
+        g1.metric(
+            "LY Same Dates",
+            fmt_kd(ly_period_val),
+            delta=f"{((cur_period_val-ly_period_val)/ly_period_val*100):.1f}% vs LY" if ly_period_val > 0 else None
+        )
+
+        g2.metric(
+            "Forecast Month End",
+            fmt_kd(forecast_month_end) if forecast_month_end > 0 else "N/A"
+        )
+
+        g3.metric(
+            "YTD vs LY",
+            fmt_kd(ytd_val),
+            delta=f"{((ytd_val-ly_ytd_val)/ly_ytd_val*100):.1f}% vs LY" if ly_ytd_val > 0 else None
+        )
+
+        g4.metric(
+            "Forecast Year End",
+            fmt_kd(forecast_year_end) if forecast_year_end > 0 else "N/A"
+        )
+
+        st.caption(
+            f"Source used: {'YTD sheet' if src is ytd_df else 'Sales sheet'} | "
+            f"LY Same Dates: {ly_start.date()} → {ly_end.date()} | "
+            f"YTD: Jan 1 → {cur_end.date()} (vs LY Jan 1 → {ly_ytd_end.date()})"
+        )
+        
+        # ==========================================================
+        # ✅ FULL AI INTELLIGENCE MODE (NO REPEAT) – GM Structured Notes
+        # Paste this block AFTER your existing:
+        #  - GM Snapshot KPIs
+        #  - GM Comparison & Forecast cards
+        # So it will NOT repeat target/forecast/mix totals again.
+        # ==========================================================
+
+        st.markdown("---")
+        st.subheader("🧠 Full AI Intelligence Mode (GM Structured Notes)")
+
+        # ---------------- Helpers ----------------
+        def _safe_pct(a, b):
+            return (a / b * 100) if b else 0.0
+
+        def _sum_sales_only(df_):
+            """Sales-only = ZFR + YKF2 (pre-sales + HHT)"""
+            if df_ is None or df_.empty:
+                return 0.0
+            d = df_.copy()
+            if "Billing Type" in d.columns:
+                d["Billing Type"] = d["Billing Type"].astype(str).str.upper().str.strip()
+                return float(d[d["Billing Type"].isin({"ZFR", "YKF2"})]["Net Value"].sum())
+            return float(d["Net Value"].sum())
+
+        def _sum_returns(df_):
+            if df_ is None or df_.empty or "Billing Type" not in df_.columns:
+                return 0.0
+            d = df_.copy()
+            d["Billing Type"] = d["Billing Type"].astype(str).str.upper().str.strip()
+            return float(d[d["Billing Type"].isin({"YKRE", "ZRE"})]["Net Value"].sum())
+
+        def _sum_cancels(df_):
+            if df_ is None or df_.empty or "Billing Type" not in df_.columns:
+                return 0.0
+            d = df_.copy()
+            d["Billing Type"] = d["Billing Type"].astype(str).str.upper().str.strip()
+            return float(d[d["Billing Type"].isin({"YKS1", "YKS2", "ZCAN"})]["Net Value"].sum())
+
+        def calc_mix(df_src):
+            """
+            Returns (retail_value, ecom_value) using channels_df mapping.
+            Fallback: (total, 0) if channels not available.
+            """
+            if df_src is None or df_src.empty:
+                return (0.0, 0.0)
+
+            if channels_df is None or channels_df.empty or not {"PY Name 1", "Channels"}.issubset(channels_df.columns):
+                total = float(df_src["Net Value"].sum())
+                return (total, 0.0)
+
+            if "PY Name 1" not in df_src.columns:
+                total = float(df_src["Net Value"].sum())
+                return (total, 0.0)
+
+            tmp = df_src.copy()
+            tmp["_py_norm"] = tmp["PY Name 1"].astype(str).str.strip().str.lower()
+
+            ch = channels_df.copy()
+            ch["_py_norm"] = ch["PY Name 1"].astype(str).str.strip().str.lower()
+
+            tmp = tmp.merge(ch[["_py_norm", "Channels"]], on="_py_norm", how="left")
+            tmp["Channels"] = tmp["Channels"].astype(str).str.lower().str.strip()
+            tmp.loc[tmp["Channels"].isin(["", "nan", "none"]), "Channels"] = "retail"
+
+            e_mask = tmp["Channels"].str.contains("e-com|ecom|ecommerce|online|talabat", regex=True, na=False)
+            e = float(tmp[e_mask]["Net Value"].sum())
+            r = float(tmp[~e_mask]["Net Value"].sum())
+            return (r, e)
+
+        def fmt_kd(x):
+            try:
+                return f"KD {float(x):,.0f}"
+            except Exception:
+                return "KD 0"
+
+        # ---------------- Base frames ----------------
+        # df_ai (your filtered period) should exist. If not, fallback:
+        try:
+            df_cur = df_ai.copy()
+        except Exception:
+            df_cur = df.copy()
+
+        df_cur = df_cur.copy()
+        df_cur["Billing Date"] = pd.to_datetime(df_cur["Billing Date"], errors="coerce")
+        df_cur["Net Value"] = pd.to_numeric(df_cur["Net Value"], errors="coerce").fillna(0)
+
+        cur_start = pd.to_datetime(start)
+        cur_end = pd.to_datetime(end)
+
+        # For LY comparisons: use YTD sheet if it has dates+values
+        ytd_df = st.session_state.get("ytd_df", pd.DataFrame()).copy()
+        use_ytd = (not ytd_df.empty and {"Billing Date", "Net Value"}.issubset(ytd_df.columns))
+        hist_src = ytd_df if use_ytd else sales_df
+
+        hist_src = hist_src.copy()
+        hist_src["Billing Date"] = pd.to_datetime(hist_src["Billing Date"], errors="coerce")
+        hist_src["Net Value"] = pd.to_numeric(hist_src["Net Value"], errors="coerce").fillna(0)
+
+        ly_start = cur_start - pd.DateOffset(years=1)
+        ly_end = cur_end - pd.DateOffset(years=1)
+
+        # ---------------- A) Executive Summary (NO repeat) ----------------
+        st.markdown("### 📝 Executive Summary (GM Notes)")
+
+        # YoY same dates (value-based) – from hist source
+        cur_same_val = float(hist_src[(hist_src["Billing Date"] >= cur_start) & (hist_src["Billing Date"] <= cur_end)]["Net Value"].sum())
+        ly_same_val  = float(hist_src[(hist_src["Billing Date"] >= ly_start) & (hist_src["Billing Date"] <= ly_end)]["Net Value"].sum())
+        yoy_pct = (_safe_pct(cur_same_val - ly_same_val, ly_same_val) if ly_same_val > 0 else None)
+
+        # Momentum (7d vs prev7d) – from current period daily totals
+        ts_daily = df_cur.groupby(df_cur["Billing Date"].dt.date)["Net Value"].sum().sort_index()
+        if len(ts_daily) >= 7:
+            last7 = ts_daily.tail(7).mean()
+            prev7 = ts_daily.tail(14).head(7).mean() if len(ts_daily) >= 14 else None
+        else:
+            last7, prev7 = None, None
+
+        mom = None
+        if prev7 is not None and prev7 != 0 and last7 is not None:
+            mom = (last7 - prev7) / prev7 * 100
+
+        notes = []
+        notes.append(f"Period: {cur_start.date()} → {cur_end.date()} | LY reference: {ly_start.date()} → {ly_end.date()} | Source: {'YTD sheet' if use_ytd else 'Sales sheet'}")
+
+        if yoy_pct is not None:
+            notes.append(f"Same-date YoY: **{yoy_pct:+.1f}%** (Current {fmt_kd(cur_same_val)} vs LY {fmt_kd(ly_same_val)}).")
+        else:
+            notes.append("Same-date YoY: **N/A** (LY data not found for same dates).")
+
+        # Only risk flags (no repeating net/mix/forecast cards)
+        if "return_pct" in globals():
+            if return_pct >= 3:
+                notes.append(f"🔴 Returns risk: **{return_pct:.1f}%** is high.")
+            elif return_pct >= 2:
+                notes.append(f"🟠 Returns watch: **{return_pct:.1f}%**.")
+        if "cancel_pct" in globals():
+            if cancel_pct >= 5:
+                notes.append(f"🔴 Cancels risk: **{cancel_pct:.1f}%** is very high.")
+            elif cancel_pct >= 3:
+                notes.append(f"🟠 Cancels watch: **{cancel_pct:.1f}%**.")
+
+        if mom is not None:
+            tag = "🟢 improving" if mom >= 5 else "🟡 stable" if mom > -5 else "🔴 slowing"
+            notes.append(f"Momentum: **{mom:+.1f}%** ({tag}) vs previous 7 days.")
+
+        for n in notes[:6]:
+            st.write("• " + n)
+
+# ================= MIX SHIFT vs LY (NET values) + DEPENDENCY TABLE (THEMED) =================
+        st.markdown("---")
+        st.markdown("### 🔄 Mix Shift vs Last Year (Clear)")
+
+        # ---------- helpers ----------
+        def _safe_pct(a, b):
+            a = float(a or 0)
+            b = float(b or 0)
+            return (a / b * 100.0) if b else 0.0
+
+        def _normalize_channel(x: str) -> str:
+            s = str(x).strip().lower()
+            if s in ("", "nan", "none"):
+                return "retail"
+            if any(k in s for k in ["e-com", "ecom", "ecommerce", "online", "talabat"]):
+                return "e-com"
+            return "retail"
+
+        def _build_channel_map(ch_df):
+            # returns dict: py_norm -> ch_norm
+            if ch_df is None or ch_df.empty:
+                return {}
+            need = {"PY Name 1", "Channels"}
+            if not need.issubset(ch_df.columns):
+                return {}
+
+            tmp = ch_df.copy()
+            tmp["_py_norm"] = tmp["PY Name 1"].astype(str).str.strip().str.lower()
+            tmp["_ch_norm"] = tmp["Channels"].apply(_normalize_channel)
+            tmp = tmp.dropna(subset=["_py_norm"])
+            tmp = tmp.drop_duplicates(subset=["_py_norm"], keep="last")
+            return dict(zip(tmp["_py_norm"], tmp["_ch_norm"]))
+
+        _ch_map_dict = _build_channel_map(channels_df)
+
+        def _add_channel(df_src):
+            t = df_src.copy()
+            if "PY Name 1" not in t.columns:
+                t["_ch_norm"] = "retail"
+                return t
+            t["_py_norm"] = t["PY Name 1"].astype(str).str.strip().str.lower()
+            t["_ch_norm"] = t["_py_norm"].map(_ch_map_dict).fillna("retail")
+            return t
+
+        def _filter_period(df_src, start_dt, end_dt):
+            if df_src is None or df_src.empty or "Billing Date" not in df_src.columns:
+                return df_src.iloc[0:0].copy() if df_src is not None else pd.DataFrame()
+            d = df_src.copy()
+            d["Billing Date"] = pd.to_datetime(d["Billing Date"], errors="coerce")
+            return d[(d["Billing Date"] >= start_dt) & (d["Billing Date"] <= end_dt)].copy()
+
+        def calc_net_mix(df_src):
+            """
+            NET Sales per channel = (ZFR+YKF2) - abs(YKRE+ZRE) - abs(YKS1+YKS2+ZCAN)
+            Returns: (retail_net, ecom_net)
+            """
+            if df_src is None or df_src.empty:
+                return 0.0, 0.0
+
+            t = _add_channel(df_src)
+
+            # ensure numeric
+            if "Net Value" not in t.columns:
+                return 0.0, 0.0
+            t["Net Value"] = pd.to_numeric(t["Net Value"], errors="coerce").fillna(0.0)
+
+            # ensure billing type
+            if "Billing Type" not in t.columns:
+                t["Billing Type"] = ""
+            t["Billing Type"] = t["Billing Type"].astype(str).str.upper().str.strip()
+
+            sales_mask   = t["Billing Type"].isin(["ZFR", "YKF2"])
+            returns_mask = t["Billing Type"].isin(["YKRE", "ZRE"])
+            cancel_mask  = t["Billing Type"].isin(["YKS1", "YKS2", "ZCAN"])
+
+            sales   = t.loc[sales_mask].groupby("_ch_norm")["Net Value"].sum()
+            returns = t.loc[returns_mask].groupby("_ch_norm")["Net Value"].sum().abs()
+            cancel  = t.loc[cancel_mask].groupby("_ch_norm")["Net Value"].sum().abs()
+
+            retail_net = float(sales.get("retail", 0.0) - returns.get("retail", 0.0) - cancel.get("retail", 0.0))
+            ecom_net   = float(sales.get("e-com", 0.0) - returns.get("e-com", 0.0) - cancel.get("e-com", 0.0))
+            return retail_net, ecom_net
+
+        # ---------- current NET mix ----------
+        cur_retail_net, cur_ecom_net = calc_net_mix(df_cur)
+        cur_total_net = cur_retail_net + cur_ecom_net
+        cur_retail_pct = _safe_pct(cur_retail_net, cur_total_net)
+        cur_ecom_pct   = _safe_pct(cur_ecom_net, cur_total_net)
+
+        # ---------- LY NET mix ----------
+        ly_start = pd.to_datetime(cur_start) - pd.DateOffset(years=1)
+        ly_end   = pd.to_datetime(cur_end)   - pd.DateOffset(years=1)
+
+        ly_src = None
+        if ytd_df is not None and not ytd_df.empty and {"Billing Date", "Net Value", "PY Name 1"}.issubset(ytd_df.columns):
+            ly_src = _filter_period(ytd_df, ly_start, ly_end)
+
+        if ly_src is None or ly_src.empty:
+            ly_src = _filter_period(sales_df, ly_start, ly_end)
+
+        ly_retail_net, ly_ecom_net = calc_net_mix(ly_src)
+        ly_total_net = ly_retail_net + ly_ecom_net
+        ly_retail_pct = _safe_pct(ly_retail_net, ly_total_net)
+        ly_ecom_pct   = _safe_pct(ly_ecom_net, ly_total_net)
+
+        shift_retail = cur_retail_pct - ly_retail_pct
+        shift_ecom   = cur_ecom_pct - ly_ecom_pct
+
+        # ---------- UI ----------
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Retail Share (Current)", f"{cur_retail_pct:.0f}%", delta=f"{shift_retail:+.0f} pts vs LY")
+        c2.metric("E-Com Share (Current)",  f"{cur_ecom_pct:.0f}%",   delta=f"{shift_ecom:+.0f} pts vs LY")
+        c3.metric("Mix Signal", "🔴 Significant Shift" if abs(shift_retail) >= 8 else "🟢 Normal")
+
+        st.caption(
+            f"Current (NET): Retail {fmt_kd(cur_retail_net)} | E-Com {fmt_kd(cur_ecom_net)}  "
+            f"|| LY (NET): Retail {fmt_kd(ly_retail_net)} | E-Com {fmt_kd(ly_ecom_net)}"
+        )
+
+ # ============================================================
+        # ⚠️ Dependency Risk (Top Names + Share)  ✅ TRUE NET VALUES
+        # Put this block under your Mix Shift section
+        # Requires: pandas as pd, fmt_kd() already defined
+        # ============================================================
+
+        st.markdown("---")
+        st.markdown("### ⚠️ Dependency Risk (Top Names + Share)")
+
+        def _net_value_series(df):
+            if df is None or df.empty or "Net Value" not in df.columns:
+                return pd.Series(dtype="float")
+
+            t = df.copy()
+            t["Net Value"] = pd.to_numeric(t["Net Value"], errors="coerce").fillna(0.0)
+
+            if "Billing Type" not in t.columns:
+                t["Billing Type"] = ""
+            bt = t["Billing Type"].astype(str).str.upper().str.strip()
+
+            sales_mask   = bt.isin(["ZFR", "YKF2"])
+            returns_mask = bt.isin(["YKRE", "ZRE"])
+            cancel_mask  = bt.isin(["YKS1", "YKS2", "ZCAN"])
+
+            net = pd.Series(0.0, index=t.index)
+            net.loc[sales_mask]   = t.loc[sales_mask, "Net Value"]
+            net.loc[returns_mask] = -t.loc[returns_mask, "Net Value"].abs()
+            net.loc[cancel_mask]  = -t.loc[cancel_mask, "Net Value"].abs()
+            return net
+
+        def dependency_table_global_total(df_src, group_col, total_net, top_n=5, label="Name"):
+            empty_tbl = pd.DataFrame({label: [], "NET (KD)": [], "Share %": []})
+
+            if df_src is None or df_src.empty or group_col not in df_src.columns:
+                return empty_tbl, 0.0, 0.0
+
+            t = df_src.copy()
+            t["_net"] = _net_value_series(t)
+
+            # NET by group (can be positive/negative)
+            g = t.groupby(group_col)["_net"].sum().sort_values(ascending=False)
+
+            # Dependency focus: only positive groups (optional)
+            g = g[g > 0].head(top_n)
+
+            top_net = float(g.sum())
+            share_pct = (top_net / total_net * 100.0) if total_net else 0.0
+
+            out = g.reset_index()
+            out.columns = [label, "_net"]
+            out["Share %"] = (out["_net"] / total_net * 100.0).round(1) if total_net else 0.0
+            out["NET (KD)"] = out["_net"].apply(fmt_kd)
+            out = out[[label, "NET (KD)", "Share %"]]
+
+            return out, float(share_pct), top_net
+
+        # ✅ Use CURRENT period df (df_cur)
+        dep_df = df_cur.copy() if df_cur is not None else pd.DataFrame()
+
+        # ---- columns (edit if needed) ----
+        SKU_COL  = "Material Description"
+        CUST_COL = "PY Name 1"
+
+        # ✅ ONE Global NET total for both tables
+        dep_df["_net"] = _net_value_series(dep_df)
+        global_total_net = float(dep_df["_net"].sum())
+
+        # tables
+        sku_tbl, sku_share, sku_top_net = dependency_table_global_total(
+            dep_df, SKU_COL, global_total_net, top_n=5, label="Top 5 SKU"
+        )
+
+        cus_tbl, cus_share, cus_top_net = dependency_table_global_total(
+            dep_df, CUST_COL, global_total_net, top_n=5, label="Top 5 Customer"
+        )
+
+        # ---- Side-by-side ----
         c1, c2 = st.columns(2)
-        if total_channels > 0:
-            c1.metric("Market Sales", f"{fmt_kd(total_market)} ({market_pct:.0f}%)")
-            c2.metric("E-com Sales", f"{fmt_kd(total_ecom)} ({ecom_pct:.0f}%)")
-        else:
-            c1.metric("Market Sales", fmt_kd(total_market))
-            c2.metric("E-com Sales", fmt_kd(total_ecom))
 
-        # ------------------------------------------------
-        # 4) YTD Growth Pulse (simple, from YTD sheet)
-        # ------------------------------------------------
+        with c1:
+            st.markdown("#### 🧾 Top 5 SKU Dependency (NET)")
+            st.dataframe(sku_tbl, use_container_width=True, hide_index=True)
+            st.caption(f"Top 5 NET: {fmt_kd(sku_top_net)} | Total NET (Current): {fmt_kd(global_total_net)}")
+
+        with c2:
+            st.markdown("#### 👤 Top 5 Customer Dependency (NET)")
+            st.dataframe(cus_tbl, use_container_width=True, hide_index=True)
+            st.caption(f"Top 5 NET: {fmt_kd(cus_top_net)} | Total NET (Current): {fmt_kd(global_total_net)}")
+
+        st.info(f"Top 5 SKU = **{sku_share:.0f}%**  |  Top 5 Customer = **{cus_share:.0f}%**")
+
+        # ---------------- C) Risk Radar (spike vs last 30 days) ----------------
         st.markdown("---")
-        st.subheader("📈 YTD Growth Pulse")
+        st.markdown("### 🚨 Risk Radar (Spikes vs Last 30 Days)")
 
-        def ytd_pulse_simple(df_ytd: pd.DataFrame):
-            if df_ytd.empty:
-                return None
+        hist30_end = cur_end
+        hist30_start = cur_end - pd.Timedelta(days=30)
 
-            df_ytd = df_ytd.copy()
-            df_ytd["Billing Date"] = pd.to_datetime(df_ytd["Billing Date"])
+        hist30 = sales_df[(sales_df["Billing Date"] >= hist30_start) & (sales_df["Billing Date"] <= hist30_end)].copy()
+        hist30["Billing Date"] = pd.to_datetime(hist30["Billing Date"], errors="coerce")
+        hist30["Net Value"] = pd.to_numeric(hist30["Net Value"], errors="coerce").fillna(0)
 
-            effective_today = df_ytd["Billing Date"].max()
-            p2_end = effective_today
-            p2_start = effective_today - pd.Timedelta(days=30)
-            p1_end = p2_start
-            p1_start = p1_end - pd.Timedelta(days=30)
+        hist_sales_only = _sum_sales_only(hist30)
+        hist_ret = abs(_sum_returns(hist30))
+        hist_can = abs(_sum_cancels(hist30))
 
-            df_p1 = df_ytd[(df_ytd["Billing Date"] >= p1_start) & (df_ytd["Billing Date"] < p1_end)]
-            df_p2 = df_ytd[(df_ytd["Billing Date"] >= p2_start) & (df_ytd["Billing Date"] <= p2_end)]
+        hist_ret_pct = _safe_pct(hist_ret, hist_sales_only)
+        hist_can_pct = _safe_pct(hist_can, hist_sales_only)
 
-            total_p1 = float(df_p1["Net Value"].sum())
-            total_p2 = float(df_p2["Net Value"].sum())
-            diff = total_p2 - total_p1
-            pct = (diff / total_p1 * 100) if total_p1 else None
+        # current rates (use your already computed return_pct/cancel_pct if present)
+        cur_sales_only = _sum_sales_only(df_cur)
+        cur_ret = abs(_sum_returns(df_cur))
+        cur_can = abs(_sum_cancels(df_cur))
 
-            current_year = effective_today.year
-            prev_year = current_year - 1
-            ytd_curr = float(df_ytd[df_ytd["Billing Date"].dt.year == current_year]["Net Value"].sum())
-            ytd_prev = float(df_ytd[df_ytd["Billing Date"].dt.year == prev_year]["Net Value"].sum())
-            yoy_diff = ytd_curr - ytd_prev
-            yoy_pct = (yoy_diff / ytd_prev * 100) if ytd_prev else None
+        cur_ret_pct = _safe_pct(cur_ret, cur_sales_only)
+        cur_can_pct = _safe_pct(cur_can, cur_sales_only)
 
-            return dict(
-                p1_start=p1_start.date(),
-                p1_end=p1_end.date(),
-                p2_start=p2_start.date(),
-                p2_end=p2_end.date(),
-                total_p1=total_p1,
-                total_p2=total_p2,
-                diff=diff,
-                pct=pct,
-                ytd_curr=ytd_curr,
-                ytd_prev=ytd_prev,
-                yoy_diff=yoy_diff,
-                yoy_pct=yoy_pct,
-                current_year=current_year,
-                prev_year=prev_year
-            )
+        spike_ret = cur_ret_pct - hist_ret_pct
+        spike_can = cur_can_pct - hist_can_pct
 
-        ytd_info = ytd_pulse_simple(ytd_df) if not ytd_df.empty else None
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Return % (Current)", f"{cur_ret_pct:.1f}%")
+        r2.metric("Return % (Last 30d)", f"{hist_ret_pct:.1f}%")
+        r3.metric("Cancel % (Current)", f"{cur_can_pct:.1f}%")
+        r4.metric("Cancel % (Last 30d)", f"{hist_can_pct:.1f}%")
 
-        if ytd_info:
-            col_y1, col_y2, col_y3 = st.columns(3)
-            col_y1.metric(
-                "Last 30d Sales",
-                fmt_kd(ytd_info["total_p2"]),
-                delta=f"{(ytd_info['pct'] or 0):.1f}% vs prev 30d" if ytd_info["pct"] is not None else None
-            )
-            col_y2.metric(
-                f"YTD {ytd_info['current_year']}",
-                fmt_kd(ytd_info["ytd_curr"]),
-                delta=f"{(ytd_info['yoy_pct'] or 0):.1f}% vs {ytd_info['prev_year']}" if ytd_info["yoy_pct"] is not None else None
-            )
-            col_y3.metric(
-                "YTD Δ Value",
-                fmt_kd(ytd_info["yoy_diff"]),
-                delta=None
-            )
-        else:
-            st.info("YTD data not available or not enough history for pulse.")
+        if spike_ret > 1:
+            st.warning(f"🔴 Return spike: +{spike_ret:.1f}% vs last 30d.")
+        if spike_can > 1:
+            st.warning(f"🟠 Cancel spike: +{spike_can:.1f}% vs last 30d.")
+        if spike_ret <= 1 and spike_can <= 1:
+            st.success("✅ No major return/cancel spikes vs last 30 days.")
 
-        # ------------------------------------------------
-        # 5) Top Salesmen & Customers (GM view, filtered period)
-        # ------------------------------------------------
-        st.markdown("---")
-        st.subheader("🏆 Drivers & 🔻 Risks")
+        # Identify top drivers for returns/cancels (names + values)
+        col_a, col_b = st.columns(2)
 
-        # Full sorted lists (GM can scroll)
-        top_sm = sales_by_sm.sort_values(ascending=False)
-        cust_sales = df_ai.groupby("PY Name 1")["Net Value"].sum().sort_values(ascending=False)
-
-        col_t1, col_t2 = st.columns(2)
-
-        # --- Top Salesmen
-        with col_t1:
-            st.markdown("**Salesmen – Sales & KA Achievement (Filtered Period)**")
-            sm_df = pd.DataFrame({
-                "Salesman": top_sm.index,
-                "Sales": top_sm.values
-            })
-            if not ka_targets.empty:
-                sm_df["KA Target"] = sm_df["Salesman"].map(ka_targets).fillna(0.0)
-                sm_df["KA % Achieved"] = np.where(
-                    sm_df["KA Target"] > 0,
-                    (sm_df["Sales"] / sm_df["KA Target"] * 100).round(0),
-                    0
-                )
-
-            styled_sm = sm_df.style.set_table_styles([{
-                "selector": "th",
-                "props": [
-                    ("background", "#1E3A8A"),
-                    ("color", "white"),
-                    ("font-weight", "800"),
-                    ("height", "40px"),
-                    ("line-height", "40px"),
-                    ("border", "1px solid #E5E7EB"),
-                    ("text-align", "center")
-                ],
-            }])
-
-            num_cols_sm = [c for c in ["Sales", "KA Target", "KA % Achieved"] if c in sm_df.columns]
-            if "Sales" in num_cols_sm or "KA Target" in num_cols_sm:
-                fmt_map = {}
-                if "Sales" in num_cols_sm:
-                    fmt_map["Sales"] = "{:,.0f}".format
-                if "KA Target" in num_cols_sm:
-                    fmt_map["KA Target"] = "{:,.0f}".format
-                styled_sm = styled_sm.format(fmt_map)
-            if "KA % Achieved" in sm_df.columns:
-                styled_sm = styled_sm.format("{:.0f}%", subset=["KA % Achieved"])
-
-            st.dataframe(styled_sm, use_container_width=True, hide_index=True, height=320)
-
-        # --- Top Customers
-        with col_t2:
-            st.markdown("**Customers – Sales & Returns (Filtered Period)**")
-            cust_df = pd.DataFrame({
-                "Customer Name": cust_sales.index,
-                "Sales": cust_sales.values
-            })
-            if "Billing Type" in df_ai.columns:
-                ret_by_cust = df_ai[df_ai["Billing Type"].isin(["YKRE", "ZRE"])] \
-                    .groupby("PY Name 1")["Net Value"].sum()
-                cust_df["Returns"] = cust_df["Customer Name"].map(ret_by_cust).fillna(0.0)
-                cust_df["Return %"] = np.where(
-                    cust_df["Sales"] > 0,
-                    (cust_df["Returns"] / cust_df["Sales"] * 100).round(1),
-                    0
-                )
-
-            styled_cust = cust_df.style.set_table_styles([{
-                "selector": "th",
-                "props": [
-                    ("background", "#1E3A8A"),
-                    ("color", "white"),
-                    ("font-weight", "800"),
-                    ("height", "40px"),
-                    ("line-height", "40px"),
-                    ("border", "1px solid #E5E7EB"),
-                    ("text-align", "center")
-                ],
-            }])
-
-            num_cols_c = [c for c in ["Sales", "Returns", "Return %"] if c in cust_df.columns]
-            if "Sales" in num_cols_c:
-                styled_cust = styled_cust.format("{:,.0f}", subset=["Sales"])
-            if "Returns" in num_cols_c:
-                styled_cust = styled_cust.format("{:,.0f}", subset=["Returns"])
-            if "Return %" in num_cols_c:
-                styled_cust = styled_cust.format("{:.1f}%", subset=["Return %"])
-
-            st.dataframe(styled_cust, use_container_width=True, hide_index=True, height=320)
-
-        # ------------------------------------------------
-        # 6) Risk & Alert Panel for GM
-        # ------------------------------------------------
-        st.markdown("---")
-        st.subheader("🚨 GM Risk Radar & Actions")
-
-        alert_lines = []
-
-        if active_ka_target > 0 and ka_ach_pct < 90:
-            alert_lines.append(
-                f"KA achievement is only {ka_ach_pct:.0f}% – risk of missing KA target. Push high-potential customers and strong SKUs."
-            )
-        if active_tal_target > 0 and tal_ach_pct < 90:
-            alert_lines.append(
-                f"Talabat (E-com) achievement is {tal_ach_pct:.0f}% – review assortment, deals and visibility in e-com."
-            )
-        if returns_pct > 3:
-            alert_lines.append(
-                f"Returns are {returns_pct:.1f}% of sales – check top return customers, ageing stock and handling."
-            )
-        if ytd_info and ytd_info["yoy_pct"] is not None and ytd_info["yoy_pct"] < 0:
-            alert_lines.append(
-                f"Negative YTD YoY growth ({ytd_info['yoy_pct']:.1f}%) – need recovery plan with promotions and new listings."
-            )
-        if ytd_info and ytd_info["pct"] is not None and ytd_info["pct"] < 0:
-            alert_lines.append(
-                f"Last 30 days (YTD sheet) are lower than previous 30 days by {fmt_kd(abs(ytd_info['diff']))} ({ytd_info['pct']:.1f}%)."
-            )
-
-        if alert_lines:
-            for a in alert_lines:
-                st.write("• " + a)
-        else:
-            st.success("✅ No major red flags detected in this period. Keep current direction and monitor weekly.")
-
-        # ------------------------------------------------
-        # 7) Material Heatmap – Material x Salesman (Net Sales)
-        # ------------------------------------------------
-        st.markdown("---")
-        st.subheader("🧩 Material Heatmap – Material x Salesman (Net Sales)")
-
-        if "Driver Name EN" in df_ai.columns and "Material Description" in df_ai.columns:
-            mat_pivot = df_ai.pivot_table(
-                index="Material Description",
-                columns="Driver Name EN",
-                values="Net Value",
-                aggfunc="sum",
-                fill_value=0.0
-            )
-
-            # Sort materials by total sales (top SKUs first)
-            row_totals = mat_pivot.sum(axis=1).sort_values(ascending=False)
-            mat_pivot = mat_pivot.loc[row_totals.index]
-
-            def material_heatmap(df_vals):
-                styles = pd.DataFrame("", index=df_vals.index, columns=df_vals.columns)
-                row_max = df_vals.max(axis=1).replace(0, np.nan)
-
-                for mat in df_vals.index:          # each material (row)
-                    max_val = row_max.loc[mat]
-                    for sm in df_vals.columns:     # each salesman (column)
-                        v = df_vals.loc[mat, sm]
-                        if pd.isna(max_val) or v <= 0:
-                            styles.loc[mat, sm] = "background-color: #F9FAFB; color: #9CA3AF"
-                        else:
-                            ratio = v / max_val
-                            if ratio >= 0.7:
-                                styles.loc[mat, sm] = "background-color: #D1FAE5; color: #065F46; font-weight: 600"
-                            elif ratio >= 0.3:
-                                styles.loc[mat, sm] = "background-color: #FEF3C7; color: #92400E; font-weight: 500"
-                            else:
-                                styles.loc[mat, sm] = "background-color: #FEE2E2; color: #991B1B"
-                return styles
-
-            styled_mat = (
-                mat_pivot.style
-                .set_table_styles([{
-                    "selector": "th",
-                    "props": [
-                        ("background", "#1F2937"),
-                        ("color", "white"),
-                        ("font-weight", "800"),
-                        ("height", "38px"),
-                        ("line-height", "38px"),
-                        ("border", "1px solid #E5E7EB"),
-                        ("text-align", "center")
-                    ],
-                }])
-                .apply(material_heatmap, axis=None)
-                .format("{:,.0f}")
-            )
-
-            st.caption(
-                "Rows = Materials, Columns = Salesmen – "
-                "🟢 strong vs best salesman for that SKU, 🟡 medium, 🔴 weak, grey = no sales."
-            )
-            st.dataframe(styled_mat, use_container_width=True, height=320, hide_index=True)
-        else:
-            st.info("Material Heatmap not available – 'Driver Name EN' or 'Material Description' missing in Sales sheet.")
-
-        # ------------------------------------------------
-        # 8) Sales Trend (Actual vs 7-day Avg)
-        # ------------------------------------------------
-        st.markdown("---")
-        st.subheader("📉 Sales Trend (Selected Period)")
-
-        ts = df_ai.copy()
-        ts["Billing Date"] = pd.to_datetime(ts["Billing Date"])
-        ts_daily = ts.groupby("Billing Date")["Net Value"].sum().reset_index()
-        ts_daily = ts_daily.sort_values("Billing Date")
-        ts_daily["7D Avg"] = ts_daily["Net Value"].rolling(window=7, min_periods=1).mean()
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=ts_daily["Billing Date"],
-            y=ts_daily["Net Value"],
-            mode="lines+markers",
-            name="Daily Sales",
-            line=dict(width=2)
-        ))
-        fig.add_trace(go.Scatter(
-            x=ts_daily["Billing Date"],
-            y=ts_daily["7D Avg"],
-            mode="lines",
-            name="7-Day Average",
-            line=dict(dash="dash", width=2)
-        ))
-        fig.update_layout(
-            xaxis_title="Date",
-            yaxis_title="Net Value (KD)",
-            hovermode="x unified"
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # ------------------------------------------------
-        # 9) GM Summary Table + Downloads (Excel + PPT)
-        # ------------------------------------------------
-        st.markdown("---")
-        st.subheader("📥 GM Summary – Downloadable Report")
-
-        gm_rows = [
-            {"Metric": "Analysis Period", "Value": f"{ai_start.date()} to {ai_end.date()}"},
-            {"Metric": "Total Sales", "Value": fmt_kd(total_sales)},
-            {"Metric": "KA Target (Active Salesmen)", "Value": fmt_kd(active_ka_target)},
-            {"Metric": "KA Achievement %", "Value": f"{ka_ach_pct:.0f}%" if active_ka_target > 0 else "N/A"},
-            {"Metric": "Talabat Sales (E-com)", "Value": fmt_kd(total_tal_sales)},
-            {"Metric": "Talabat Target (Active Salesmen)", "Value": fmt_kd(active_tal_target)},
-            {"Metric": "Talabat Achievement %", "Value": f"{tal_ach_pct:.0f}%" if active_tal_target > 0 else "N/A"},
-            {"Metric": "Market Sales", "Value": fmt_kd(total_market)},
-            {"Metric": "E-com Sales", "Value": fmt_kd(total_ecom)},
-            {"Metric": "Returns Value", "Value": fmt_kd(total_returns)},
-            {"Metric": "Returns % of Sales", "Value": f"{returns_pct:.1f}%" if total_sales > 0 else "N/A"},
-        ]
-
-        if ytd_info:
-            gm_rows.append({
-                "Metric": "Last 30d vs Prev 30d (YTD sheet)",
-                "Value": f"{fmt_kd(ytd_info['total_p2'])} vs {fmt_kd(ytd_info['total_p1'])} ({(ytd_info['pct'] or 0):.1f}%)"
-            })
-            gm_rows.append({
-                "Metric": f"YTD {ytd_info['current_year']} vs {ytd_info['prev_year']}",
-                "Value": f"{fmt_kd(ytd_info['ytd_curr'])} vs {fmt_kd(ytd_info['ytd_prev'])} ({(ytd_info['yoy_pct'] or 0):.1f}%)"
-            })
-
-        gm_df = pd.DataFrame(gm_rows)
-
-        styled_gm = gm_df.style.set_table_styles([{
-            "selector": "th",
-            "props": [
-                ("background", "#1E3A8A"),
-                ("color", "white"),
-                ("font-weight", "800"),
-                ("height", "40px"),
-                ("line-height", "40px"),
-                ("border", "1px solid #E5E7EB"),
-                ("text-align", "center")
-            ],
-        }])
-        st.dataframe(styled_gm, use_container_width=True, hide_index=True)
-
-        # Excel export
-        gm_excel_bytes = to_excel_bytes(gm_df, sheet_name="GM_Executive_Summary", index=False)
-        st.download_button(
-            "⬇️ Download GM Summary (Excel)",
-            data=gm_excel_bytes,
-            file_name=f"GM_Executive_Summary_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        # PPT export (simple 1-slide deck)
-        def build_gm_ppt(gm_df, alerts):
-            prs = Presentation()
-            slide = prs.slides.add_slide(prs.slide_layouts[5])  # blank
-
-            # Title
-            title_box = slide.shapes.add_textbox(Inches(0.5), Inches(0.4), Inches(9), Inches(1))
-            tf = title_box.text_frame
-            tf.text = "GM Executive Sales Summary"
-            tf.paragraphs[0].font.size = Pt(28)
-            tf.paragraphs[0].font.bold = True
-
-            # KPIs
-            body_box = slide.shapes.add_textbox(Inches(0.5), Inches(1.4), Inches(9), Inches(3.2))
-            bf = body_box.text_frame
-            bf.word_wrap = True
-            p0 = bf.paragraphs[0]
-            p0.text = "Key Metrics:"
-            p0.font.bold = True
-            p0.font.size = Pt(18)
-
-            for _, row in gm_df.iterrows():
-                p = bf.add_paragraph()
-                p.text = f"- {row['Metric']}: {row['Value']}"
-                p.level = 1
-                p.font.size = Pt(14)
-
-            # Alerts
-            alert_box = slide.shapes.add_textbox(Inches(0.5), Inches(4.8), Inches(9), Inches(2.2))
-            af = alert_box.text_frame
-            af.word_wrap = True
-            pa0 = af.paragraphs[0]
-            pa0.text = "Key Alerts / Actions:"
-            pa0.font.bold = True
-            pa0.font.size = Pt(18)
-
-            if alerts:
-                for a in alerts:
-                    pa = af.add_paragraph()
-                    pa.text = f"- {a}"
-                    pa.level = 1
-                    pa.font.size = Pt(14)
+        with col_a:
+            st.markdown("**Top Return Drivers (Current Period)**")
+            if "Billing Type" in df_cur.columns and "Driver Name EN" in df_cur.columns:
+                dtmp = df_cur.copy()
+                dtmp["Billing Type"] = dtmp["Billing Type"].astype(str).str.upper().str.strip()
+                ret_sm = dtmp[dtmp["Billing Type"].isin({"YKRE","ZRE"})].groupby("Driver Name EN")["Net Value"].sum().abs().sort_values(ascending=False).head(5)
+                if len(ret_sm):
+                    ret_tbl = ret_sm.reset_index()
+                    ret_tbl.columns = ["Salesman", "Returns"]
+                    render_table(ret_tbl, hide_index=True, formats={"Returns": "{:,.0f}"})
+                else:
+                    st.caption("No return records found.")
             else:
-                pa = af.add_paragraph()
-                pa.text = "- No critical alerts in this period."
-                pa.level = 1
-                pa.font.size = Pt(14)
+                st.caption("Required columns missing.")
 
-            bio = io.BytesIO()
-            prs.save(bio)
-            bio.seek(0)
-            return bio.getvalue()
+        with col_b:
+            st.markdown("**Top Cancel Drivers (Current Period)**")
+            if "Billing Type" in df_cur.columns and "Driver Name EN" in df_cur.columns:
+                dtmp = df_cur.copy()
+                dtmp["Billing Type"] = dtmp["Billing Type"].astype(str).str.upper().str.strip()
+                can_sm = dtmp[dtmp["Billing Type"].isin({"YKS1","YKS2","ZCAN"})].groupby("Driver Name EN")["Net Value"].sum().abs().sort_values(ascending=False).head(5)
+                if len(can_sm):
+                    can_tbl = can_sm.reset_index()
+                    can_tbl.columns = ["Salesman", "Cancels"]
+                    render_table(can_tbl, hide_index=True, formats={"Cancels": "{:,.0f}"})
+                else:
+                    st.caption("No cancel records found.")
+            else:
+                st.caption("Required columns missing.")
 
-        gm_ppt_bytes = build_gm_ppt(gm_df, alert_lines)
+ 
 
-        st.download_button(
-            "⬇️ Download GM Snapshot (PPTX)",
-            data=gm_ppt_bytes,
-            file_name=f"GM_Executive_Snapshot_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        )
+        # # ---------------- E) Top 5 SKUs by Category ----------------
+        # st.markdown("---")
+        # st.markdown("### 🏷️ Top 5 SKUs by Category (Value)")
+
+        # possible_cat_cols = ["Category", "Material Group", "Product Group", "Brand", "Division", "Group"]
+        # cat_col = next((c for c in possible_cat_cols if c in df_cur.columns), None)
+
+        # if cat_col and "Material Description" in df_cur.columns:
+        #     cat_vals = df_cur[cat_col].dropna().astype(str).unique().tolist()
+        #     cat_vals = sorted(cat_vals)
+
+        #     sel_cat = st.selectbox("Select Category", cat_vals)
+        #     df_cat = df_cur[df_cur[cat_col].astype(str) == str(sel_cat)]
+
+        #     sku_cat = df_cat.groupby("Material Description")["Net Value"].sum().sort_values(ascending=False).head(5).reset_index()
+        #     sku_cat.columns = ["SKU", "Sales"]
+        #     render_table(sku_cat, hide_index=True, formats={"Sales": "{:,.0f}"})
+
+        #     st.caption(f"Category column used: {cat_col}")
+        # else:
+        #     st.info("Category-wise view not available (need Category/Group column + Material Description).")
+
+        # ---------------- F) GM Action Plan (Auto, non-repeat) ----------------
+        st.markdown("---")
+        st.markdown("### ✅ GM Action Plan (Auto)")
+
+        actions = []
+
+        # Based on spikes and momentum
+        if spike_can > 1:
+            actions.append("Warehouse/Planning: Cancel spike vs last 30 days → check stock accuracy, picking, delivery schedule, and allocation.")
+        elif cur_can_pct >= 3:
+            actions.append("Operations: Cancel % is high → review cancel reasons and fix root causes.")
+
+        if spike_ret > 1:
+            actions.append("QA/Warehouse: Return spike vs last 30 days → check quality, handling, expiry/temperature issues, and top return SKUs/customers.")
+        elif cur_ret_pct >= 3:
+            actions.append("QA: Return % is high → run return reason audit and corrective actions.")
+
+        if mom is not None:
+            if mom < -5:
+                actions.append("Sales Leaders: Momentum slowing → enforce weekly push plan, focus top customers and hero SKUs.")
+            elif mom > 5:
+                actions.append("Management: Momentum improving → scale winning actions (promotions/visibility/assortment) and protect availability.")
+
+        # Mix shift meaning (only if we calculated)
+        try:
+            if abs(shift_retail) >= 8:
+                actions.append("Key Accounts: Channel mix shifted strongly vs LY → review execution, promotions, and supply planning by channel.")
+        except Exception:
+            pass
+
+        # Dependency actions
+        try:
+            if top3_share >= 55:
+                actions.append("Category Manager: High SKU dependency → diversify mix, push secondary SKUs, reduce single-SKU risk.")
+        except Exception:
+            pass
+
+        if not actions:
+            actions.append("✅ No critical alerts. Maintain execution and review weekly KPIs.")
+
+        for a in actions[:7]:
+            st.write("• " + a)
+            
+
+        # ------------------------------------------------
+        # 8) Top Salesmen Spotlight (Net + Risk)
+        # ------------------------------------------------
+        st.markdown("---")
+        st.subheader("🏆 GM Spotlight – Top Salesmen (Net + Risk)")
+
+        if "Driver Name EN" in df.columns:
+            g = df.groupby(["Driver Name EN", "Billing Type"])["Net Value"].sum().unstack(fill_value=0)
+
+            sales_sm = g.reindex(columns=list(SALES_BT), fill_value=0).sum(axis=1)
+            ret_sm   = g.reindex(columns=list(RETURN_BT), fill_value=0).sum(axis=1).abs()
+            can_sm   = g.reindex(columns=list(CANCEL_BT), fill_value=0).sum(axis=1).abs()
+
+            net_sm = sales_sm - ret_sm - can_sm
+
+            sm_tbl = pd.DataFrame({
+                "Salesman": net_sm.index,
+                "Net Sales": net_sm.values,
+                "Return %": np.where(sales_sm.values != 0, (ret_sm.values / sales_sm.values * 100).round(1), 0),
+                "Cancel %": np.where(sales_sm.values != 0, (can_sm.values / sales_sm.values * 100).round(1), 0),
+            })
+            sm_tbl["Tag"] = sm_tbl.apply(lambda r: gm_tag(r["Return %"], r["Cancel %"]), axis=1)
+
+            sm_tbl = sm_tbl.sort_values("Net Sales", ascending=False).head(top_n)
+
+            render_table(
+                sm_tbl,
+                hide_index=True,
+                formats={
+                    "Net Sales": "{:,.0f}",
+                    "Return %": "{:.1f}%",
+                    "Cancel %": "{:.1f}%"
+                }
+            )
+        else:
+            st.info("Salesman column not available.")
+
+        # ------------------------------------------------
+        # 9) Customer Risk Table (Returns focus)
+        # ------------------------------------------------
+        st.markdown("---")
+        st.subheader("🔻 Customer Risk – Returns Focus (Top 10)")
+
+        if "PY Name 1" in df.columns:
+            g2 = df.groupby(["PY Name 1", "Billing Type"])["Net Value"].sum().unstack(fill_value=0)
+            sales_c = g2.reindex(columns=list(SALES_BT), fill_value=0).sum(axis=1)
+            ret_c   = g2.reindex(columns=list(RETURN_BT), fill_value=0).sum(axis=1).abs()
+            can_c   = g2.reindex(columns=list(CANCEL_BT), fill_value=0).sum(axis=1).abs()
+            net_c   = sales_c - ret_c - can_c
+
+            cust_tbl = pd.DataFrame({
+                "Customer": net_c.index,
+                "Net Sales": net_c.values,
+                "Returns": ret_c.values,
+                "Return %": np.where(sales_c.values != 0, (ret_c.values / sales_c.values * 100).round(1), 0),
+            }).sort_values(["Return %", "Returns"], ascending=False).head(10)
+
+            render_table(
+                cust_tbl,
+                hide_index=True,
+                formats={
+                    "Net Sales": "{:,.0f}",
+                    "Returns": "{:,.0f}",
+                    "Return %": "{:.1f}%"
+                }
+            )
+        else:
+            st.info("Customer column not available.")
+
+        # ------------------------------------------------
+        # 10) GM Action Notes
+        # ------------------------------------------------
+        st.markdown("---")
+        st.subheader("✅ GM Action Notes")
+
+        notes = []
+        if return_pct >= 3:
+            notes.append(f"Returns are high ({return_pct:.1f}%). Check top return customers and handling / expiry.")
+        if cancel_pct >= 3:
+            notes.append(f"Cancels are high ({cancel_pct:.1f}%). Review warehouse cancel reasons and stock accuracy.")
+        if mix_total > 0 and ecom_mix >= 50:
+            notes.append("E-com share is high. Ensure retail execution (visibility + availability) is not dropping.")
+
+        if notes:
+            for n in notes:
+                st.write("• " + n)
+        else:
+            st.success("✅ No major GM risks detected for this period.")
+            
+            
             
 # ---------------- Customer Insights Page (Full Pro Version, Fixed) ----------------
 elif choice == texts[lang]["customer_insights"]:
