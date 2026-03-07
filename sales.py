@@ -6998,80 +6998,80 @@ elif choice == "💰 Profit & Margin":
         )
         
         
-# ================= DAILY EMAIL SUMMARY HELPER =================
-def build_daily_email_summary(total_ka_target, total_sales, salesman_df, customer_sales):
-    import pandas as pd
-    import numpy as np
+# # ================= DAILY EMAIL SUMMARY HELPER =================
+# def build_daily_email_summary(total_ka_target, total_sales, salesman_df, customer_sales):
+#     import pandas as pd
+#     import numpy as np
 
-    total_ka_target = float(total_ka_target or 0)
-    total_sales = float(total_sales or 0)
+#     total_ka_target = float(total_ka_target or 0)
+#     total_sales = float(total_sales or 0)
 
-    achieved_pct = (total_sales / total_ka_target * 100) if total_ka_target > 0 else 0.0
-    balance = total_ka_target - total_sales
+#     achieved_pct = (total_sales / total_ka_target * 100) if total_ka_target > 0 else 0.0
+#     balance = total_ka_target - total_sales
 
-    # ---------- Salesman summary ----------
-    sm = salesman_df.copy() if isinstance(salesman_df, pd.DataFrame) else pd.DataFrame()
+#     # ---------- Salesman summary ----------
+#     sm = salesman_df.copy() if isinstance(salesman_df, pd.DataFrame) else pd.DataFrame()
 
-    if not sm.empty:
-        for col in ["Target", "Achieved", "Balance"]:
-            if col in sm.columns:
-                sm[col] = pd.to_numeric(sm[col], errors="coerce").fillna(0.0)
+#     if not sm.empty:
+#         for col in ["Target", "Achieved", "Balance"]:
+#             if col in sm.columns:
+#                 sm[col] = pd.to_numeric(sm[col], errors="coerce").fillna(0.0)
 
-        if "Target" in sm.columns and "Achieved" in sm.columns:
-            sm["Ach %"] = np.where(sm["Target"] > 0, (sm["Achieved"] / sm["Target"]) * 100, 0.0)
-        else:
-            sm["Ach %"] = 0.0
+#         if "Target" in sm.columns and "Achieved" in sm.columns:
+#             sm["Ach %"] = np.where(sm["Target"] > 0, (sm["Achieved"] / sm["Target"]) * 100, 0.0)
+#         else:
+#             sm["Ach %"] = 0.0
 
-        sm_top = sm.sort_values("Achieved", ascending=False).head(5)
+#         sm_top = sm.sort_values("Achieved", ascending=False).head(5)
 
-        top_salesmen_txt = "\n".join([
-            f"- {row.get('Driver Name EN', 'Unknown')}: "
-            f"Achieved KD {float(row.get('Achieved', 0)):,.0f} | "
-            f"Target KD {float(row.get('Target', 0)):,.0f} | "
-            f"Balance KD {float(row.get('Balance', 0)):,.0f} | "
-            f"{float(row.get('Ach %', 0)):.1f}%"
-            for _, row in sm_top.iterrows()
-        ]) if not sm_top.empty else "No salesman data available."
-    else:
-        top_salesmen_txt = "No salesman data available."
+#         top_salesmen_txt = "\n".join([
+#             f"- {row.get('Driver Name EN', 'Unknown')}: "
+#             f"Achieved KD {float(row.get('Achieved', 0)):,.0f} | "
+#             f"Target KD {float(row.get('Target', 0)):,.0f} | "
+#             f"Balance KD {float(row.get('Balance', 0)):,.0f} | "
+#             f"{float(row.get('Ach %', 0)):.1f}%"
+#             for _, row in sm_top.iterrows()
+#         ]) if not sm_top.empty else "No salesman data available."
+#     else:
+#         top_salesmen_txt = "No salesman data available."
 
-    # ---------- Customer summary ----------
-    if isinstance(customer_sales, pd.Series) and not customer_sales.empty:
-        cust_top = customer_sales.sort_values(ascending=False).head(10)
-        top_customers_txt = "\n".join([
-            f"- {str(name)}: KD {float(val):,.0f}"
-            for name, val in cust_top.items()
-        ])
-    else:
-        top_customers_txt = "No customer data available."
+#     # ---------- Customer summary ----------
+#     if isinstance(customer_sales, pd.Series) and not customer_sales.empty:
+#         cust_top = customer_sales.sort_values(ascending=False).head(10)
+#         top_customers_txt = "\n".join([
+#             f"- {str(name)}: KD {float(val):,.0f}"
+#             for name, val in cust_top.items()
+#         ])
+#     else:
+#         top_customers_txt = "No customer data available."
 
-    subject = (
-        f"Daily Sales Summary | "
-        f"Sales KD {total_sales:,.0f} / Target KD {total_ka_target:,.0f} "
-        f"({achieved_pct:.1f}%)"
-    )
+#     subject = (
+#         f"Daily Sales Summary | "
+#         f"Sales KD {total_sales:,.0f} / Target KD {total_ka_target:,.0f} "
+#         f"({achieved_pct:.1f}%)"
+#     )
 
-    body = f"""Dear Team,
+#     body = f"""Dear Team,
 
-Please find below the daily sales summary:
+# Please find below the daily sales summary:
 
-Overall Performance
-- Total KA Target: KD {total_ka_target:,.0f}
-- Total Sales Achieved: KD {total_sales:,.0f}
-- Achievement: {achieved_pct:.1f}%
-- Balance to Target: KD {balance:,.0f}
+# Overall Performance
+# - Total KA Target: KD {total_ka_target:,.0f}
+# - Total Sales Achieved: KD {total_sales:,.0f}
+# - Achievement: {achieved_pct:.1f}%
+# - Balance to Target: KD {balance:,.0f}
 
-Top Salesmen
-{top_salesmen_txt}
+# Top Salesmen
+# {top_salesmen_txt}
 
-Top Customers
-{top_customers_txt}
+# Top Customers
+# {top_customers_txt}
 
-Regards,
-Management Dashboard
-"""
+# Regards,
+# Management Dashboard
+# """
 
-    return subject, body
+#     return subject, body
 
 
 elif choice == "🧭 Management Command Center":
