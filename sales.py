@@ -44,6 +44,7 @@ from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 import io
+import zipfile
 from sklearn.linear_model import LinearRegression
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import os
@@ -802,114 +803,220 @@ def to_multi_sheet_excel_bytes(dfs, sheet_names) -> bytes:
     return output.getvalue()
 
 # --- PPTX Export ---
-def create_pptx(report_df, billing_df, py_table, figs_dict, kpi_data, talabat_tables=None):
+def create_pptx(
+    report_df,
+    billing_df,
+    py_table,
+    figs_dict,
+    kpi_data,
+    talabat_tables=None,
+    selected_slide_keys=None,
+    slide_catalog=None,
+    extra_context=None,
+):
+    extra_context = extra_context or {}
+    if selected_slide_keys is None:
+        selected_slide_keys = [
+            "TITLE", "KPI", "TREND", "CHANNEL", "CHANNEL_TREND",
+            "SALESMAN", "CUSTOMERS", "SKUS", "TALABAT", "INSIGHTS"
+        ]
+
+    selected_slide_keys = [str(x).strip().upper() for x in selected_slide_keys]
+    selected_set = set(selected_slide_keys)
+
     with st.spinner(texts[lang]["generating_pptx"]):
         prs = Presentation()
-        slide_layout = prs.slide_layouts[0]
-        slide = prs.slides.add_slide(slide_layout)
-        title = slide.shapes.title
-        title.text = texts[lang]["pptx_title"]
-        title.text_frame.paragraphs[0].font.size = Pt(32)
-        title.text_frame.paragraphs[0].font.name = 'Roboto'
-        title.text_frame.paragraphs[0].font.color.rgb = RGBColor(30, 58, 138)
-        try:
-            subtitle = slide.placeholders[1]
-            subtitle.text = texts[lang]["pptx_generated"].format(datetime.now().strftime('%Y-%m-%d'))
-            subtitle.text_frame.paragraphs[0].font.size = Pt(18)
-            subtitle.text_frame.paragraphs[0].font.name = 'Roboto'
-            subtitle.text_frame.paragraphs[0].font.color.rgb = RGBColor(55, 65, 81)
-        except Exception:
-            pass
 
-        slide_layout = prs.slide_layouts[5]
-        slide = prs.slides.add_slide(slide_layout)
-        slide.shapes.title.text = texts[lang]["pptx_kpi_title"]
-        slide.shapes.title.text_frame.paragraphs[0].font.size = Pt(24)
-        slide.shapes.title.text_frame.paragraphs[0].font.name = 'Roboto'
-        slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = RGBColor(30, 58, 138)
+        def _safe_title(slide, title_text):
+            try:
+                slide.shapes.title.text = str(title_text)
+                slide.shapes.title.text_frame.paragraphs[0].font.size = Pt(24)
+                slide.shapes.title.text_frame.paragraphs[0].font.name = 'Roboto'
+                slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = RGBColor(30, 58, 138)
+            except Exception:
+                pass
 
-        rows = 4
-        cols = 3
-        left = Inches(1)
-        top = Inches(1.5)
-        width = Inches(8)
-        height = Inches(4)
-        table = slide.shapes.add_table(rows, cols, left, top, width, height).table
-        kpi_list = list(kpi_data.items())
-        for i in range(rows):
-            for j in range(cols):
-                index = i * cols + j
-                if index < len(kpi_list):
-                    label, value = kpi_list[index]
+        def add_title_slide():
+            slide_layout = prs.slide_layouts[0]
+            slide = prs.slides.add_slide(slide_layout)
+            title = slide.shapes.title
+            title.text = extra_context.get('report_title', texts[lang]["pptx_title"])
+            title.text_frame.paragraphs[0].font.size = Pt(30)
+            title.text_frame.paragraphs[0].font.name = 'Roboto'
+            title.text_frame.paragraphs[0].font.color.rgb = RGBColor(30, 58, 138)
+            try:
+                subtitle = slide.placeholders[1]
+                period_txt = extra_context.get('period_text', datetime.now().strftime('%Y-%m-%d'))
+                prepared_by = extra_context.get('prepared_by', st.session_state.get('name', 'Mohamed Haneef'))
+                subtitle.text = f"MTD Management Report\n{period_txt}\nPrepared by: {prepared_by}"
+                subtitle.text_frame.paragraphs[0].font.size = Pt(18)
+                subtitle.text_frame.paragraphs[0].font.name = 'Roboto'
+                subtitle.text_frame.paragraphs[0].font.color.rgb = RGBColor(55, 65, 81)
+            except Exception:
+                pass
+
+        def add_kpi_slide():
+            slide_layout = prs.slide_layouts[5]
+            slide = prs.slides.add_slide(slide_layout)
+            _safe_title(slide, '📈 KPI Summary')
+            rows = 4
+            cols = 3
+            table = slide.shapes.add_table(rows, cols, Inches(0.7), Inches(1.4), Inches(8.9), Inches(4.3)).table
+            kpi_list = list(kpi_data.items()) if isinstance(kpi_data, dict) else []
+            idx = 0
+            for i in range(rows):
+                for j in range(cols):
+                    if idx >= len(kpi_list):
+                        continue
+                    label, value = kpi_list[idx]
                     cell = table.cell(i, j)
                     cell.text = f"{label}\n{value}"
-                    cell.text_frame.paragraphs[0].font.size = Pt(12)
-                    cell.text_frame.paragraphs[0].font.name = 'Roboto'
-                    cell.text_frame.paragraphs[0].font.bold = True
-                    cell.fill.solid()
-                    cell.fill.fore_color.rgb = RGBColor(243, 244, 246)
+                    try:
+                        cell.text_frame.paragraphs[0].font.size = Pt(11)
+                        cell.text_frame.paragraphs[0].font.name = 'Roboto'
+                        cell.text_frame.paragraphs[0].font.bold = True
+                        cell.fill.solid()
+                        cell.fill.fore_color.rgb = RGBColor(243, 244, 246)
+                    except Exception:
+                        pass
+                    idx += 1
 
-        def add_table_slide(df, title):
+        def add_table_slide(df, title_text, max_rows=28):
+            if df is None or not hasattr(df, 'empty') or df.empty:
+                return
+            df2 = df.copy().reset_index(drop=True)
+            if len(df2) > max_rows:
+                df2 = df2.head(max_rows)
             slide_layout = prs.slide_layouts[5]
             slide = prs.slides.add_slide(slide_layout)
-            slide.shapes.title.text = title
-            slide.shapes.title.text_frame.paragraphs[0].font.size = Pt(24)
-            slide.shapes.title.text_frame.paragraphs[0].font.name = 'Roboto'
-            slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = RGBColor(30, 58, 138)
-            rows, cols = df.shape
-            table = slide.shapes.add_table(rows + 1, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(4)).table
-            for j, col in enumerate(df.columns):
-                cell = table.cell(0, j)
-                cell.text = str(col)
-                cell.text_frame.paragraphs[0].font.size = Pt(14)
-                cell.text_frame.paragraphs[0].font.name = 'Roboto'
-                cell.text_frame.paragraphs[0].font.bold = True
-                cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
-                cell.fill.solid()
-                cell.fill.fore_color.rgb = RGBColor(30, 58, 138)
-            for i, row in enumerate(df.itertuples(index=False), start=1):
+            _safe_title(slide, title_text)
+            rows, cols = df2.shape
+            table = slide.shapes.add_table(rows + 1, cols, Inches(0.3), Inches(1.2), Inches(9.2), Inches(5.3)).table
+            for j, col in enumerate(df2.columns):
+                c = table.cell(0, j)
+                c.text = str(col)
+                try:
+                    c.text_frame.paragraphs[0].font.size = Pt(11)
+                    c.text_frame.paragraphs[0].font.name = 'Roboto'
+                    c.text_frame.paragraphs[0].font.bold = True
+                    c.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
+                    c.fill.solid()
+                    c.fill.fore_color.rgb = RGBColor(30, 58, 138)
+                except Exception:
+                    pass
+            for i, row in enumerate(df2.itertuples(index=False), start=1):
                 for j, val in enumerate(row):
-                    cell = table.cell(i, j)
+                    c = table.cell(i, j)
                     if isinstance(val, (int, float, np.integer, np.floating)):
-                        cell.text = f"{val:,.0f}"
+                        c.text = f"{val:,.0f}"
                     else:
-                        cell.text = str(val)
-                    cell.text_frame.paragraphs[0].font.size = Pt(12)
-                    cell.text_frame.paragraphs[0].font.name = 'Roboto'
-                    cell.fill.solid()
-                    cell.fill.fore_color.rgb = RGBColor(243, 244, 246) if i % 2 == 0 else RGBColor(255, 255, 255)
+                        c.text = str(val)
+                    try:
+                        c.text_frame.paragraphs[0].font.size = Pt(10)
+                        c.text_frame.paragraphs[0].font.name = 'Roboto'
+                        c.fill.solid()
+                        c.fill.fore_color.rgb = RGBColor(243, 244, 246) if i % 2 == 0 else RGBColor(255, 255, 255)
+                    except Exception:
+                        pass
 
-        def add_chart_slide(fig, title):
+        def add_chart_slide(fig, title_text):
+            if fig is None:
+                return
             slide_layout = prs.slide_layouts[5]
             slide = prs.slides.add_slide(slide_layout)
-            slide.shapes.title.text = title
-            slide.shapes.title.text_frame.paragraphs[0].font.size = Pt(24)
-            slide.shapes.title.text_frame.paragraphs[0].font.name = 'Roboto'
-            slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = RGBColor(30, 58, 138)
+            _safe_title(slide, title_text)
             img_stream = io.BytesIO()
             try:
-                fig.write_image(img_stream, format="png", width=800, height=600)
+                if hasattr(fig, 'to_image'):
+                    img_stream.write(fig.to_image(format='png', width=1200, height=700, scale=2))
+                else:
+                    fig.write_image(img_stream, format='png', width=1200, height=700, scale=2)
                 img_stream.seek(0)
-                slide.shapes.add_picture(img_stream, Inches(0.5), Inches(1.5), width=Inches(9))
+                slide.shapes.add_picture(img_stream, Inches(0.4), Inches(1.1), width=Inches(9.0))
             except Exception as e:
-                slide.shapes.add_textbox(Inches(0.5), Inches(1.5), Inches(9), Inches(4)).text_frame.text = (
-                    texts[lang]["pptx_embed_error"].format(e)
-                )
+                box = slide.shapes.add_textbox(Inches(0.6), Inches(1.5), Inches(8.5), Inches(3.0))
+                box.text_frame.text = texts[lang].get('pptx_embed_error', 'Chart export error: {0}').format(e)
 
-        add_table_slide(report_df.reset_index(), texts[lang]["pptx_summary_title"])
-        add_table_slide(billing_df.reset_index(), texts[lang]["pptx_billing_title"])
-        add_table_slide(py_table.reset_index(), texts[lang]["pptx_py_title"])
+        def add_insights_slide():
+            slide_layout = prs.slide_layouts[5]
+            slide = prs.slides.add_slide(slide_layout)
+            _safe_title(slide, '🧠 Executive Insights')
+            box = slide.shapes.add_textbox(Inches(0.7), Inches(1.3), Inches(8.7), Inches(4.8))
+            tf = box.text_frame
+            insights = []
+            try:
+                total_sales_text = next((str(v) for k, v in kpi_data.items() if 'Total KA Sales' in str(k) or 'Total Sales' in str(k)), None)
+                if total_sales_text:
+                    insights.append(f"• Total sales achieved: {total_sales_text}")
+            except Exception:
+                pass
+            try:
+                top_customer_share = extra_context.get('top_customer_share', 0)
+                if top_customer_share:
+                    insights.append(f"• Top 5 customers contribute {top_customer_share:.1f}% of total sales.")
+            except Exception:
+                pass
+            try:
+                top_sku_share = extra_context.get('top_sku_share', 0)
+                if top_sku_share:
+                    insights.append(f"• Top 5 SKU dependency is {top_sku_share:.1f}% of total sales.")
+            except Exception:
+                pass
+            try:
+                retail_share = extra_context.get('retail_share', 0)
+                ecom_share = extra_context.get('ecom_share', 0)
+                if retail_share or ecom_share:
+                    insights.append(f"• Channel mix: Retail {retail_share:.1f}% vs E-com {ecom_share:.1f}%.")
+            except Exception:
+                pass
+            try:
+                mtd_ach = extra_context.get('mtd_achievement', 0)
+                if mtd_ach:
+                    insights.append(f"• MTD achievement is {mtd_ach:.1f}% against target.")
+            except Exception:
+                pass
+            if not insights:
+                insights = [
+                    '• Review top customers, top SKUs, and channel mix.',
+                    '• Monitor returns and cancels closely.',
+                    '• Use trend and run-rate slides for weekly actions.'
+                ]
+            tf.text = insights[0]
+            for line in insights[1:]:
+                p = tf.add_paragraph()
+                p.text = line
+                p.level = 0
 
-        # --- Talabat tables (optional) ---
-        if isinstance(talabat_tables, dict):
-            tb = talabat_tables.get("billing_split")
-            if tb is not None and hasattr(tb, "empty") and (not tb.empty):
-                add_table_slide(tb, "🛵 Talabat – Billing Split")
-            tc = talabat_tables.get("customers")
-            if tc is not None and hasattr(tc, "empty") and (not tc.empty):
-                add_table_slide(tc, "🛵 Talabat – Customer Summary")
-        for key, fig in figs_dict.items():
-            add_chart_slide(fig, key)
+        if 'TITLE' in selected_set:
+            add_title_slide()
+        if 'KPI' in selected_set:
+            add_kpi_slide()
+
+        slide_map = {
+            'TREND': ('Daily Sales Trend', figs_dict.get('TREND')),
+            'CHANNEL': ('Retail vs E-com', figs_dict.get('CHANNEL')),
+            'CHANNEL_TREND': ('Channel Trend Over Time', figs_dict.get('CHANNEL_TREND')),
+            'SALESMAN': ('Salesman Performance', figs_dict.get('SALESMAN')),
+            'CUSTOMERS': ('Top 10 Customers by Sales', figs_dict.get('CUSTOMERS')),
+            'SKUS': ('Top 10 SKU by Sales', figs_dict.get('SKUS')),
+        }
+        for key in selected_slide_keys:
+            if key in slide_map and slide_map[key][1] is not None:
+                add_chart_slide(slide_map[key][1], slide_map[key][0])
+            elif key == 'TALABAT' and isinstance(talabat_tables, dict):
+                tb = talabat_tables.get('billing_split')
+                tc = talabat_tables.get('customers')
+                if tb is not None and hasattr(tb, 'empty') and not tb.empty:
+                    add_table_slide(tb, '🛵 Talabat – Billing Split', max_rows=18)
+                if tc is not None and hasattr(tc, 'empty') and not tc.empty:
+                    add_table_slide(tc, '🛵 Talabat – Customer Summary', max_rows=20)
+            elif key == 'INSIGHTS':
+                add_insights_slide()
+            elif key == 'APPENDIX':
+                add_table_slide(report_df.reset_index(), texts[lang]["pptx_summary_title"])
+                add_table_slide(billing_df.reset_index(), texts[lang]["pptx_billing_title"])
+                add_table_slide(py_table.reset_index(), texts[lang]["pptx_py_title"])
+
         pptx_stream = io.BytesIO()
         prs.save(pptx_stream)
         pptx_stream.seek(0)
@@ -2639,58 +2746,160 @@ elif choice == texts[lang]["sales_tracking"]:
                         col1, col2 = st.columns(2)
 
                         # --------------------------
-                        # COL 1: PPTX GENERATION
+                        # COL 1: PPTX DOWNLOAD HUB + MANAGEMENT PACK
                         # --------------------------
                         with col1:
-                            if st.button(texts[lang]["generate_pptx"]):
+                            st.markdown("### 📊 Management PPT Download Hub")
 
-                                # ✅ FIX: Build figs_dict safely (avoid NameError if any fig not created)
-                                figs_dict = {}
+                            SLIDE_CATALOG = [
+                                ("TITLE", "01) Title"),
+                                ("KPI", "02) KPI Summary"),
+                                ("TREND", "03) Daily Sales Trend"),
+                                ("CHANNEL", "04) Retail vs E-com"),
+                                ("CHANNEL_TREND", "05) Channel Trend Over Time"),
+                                ("SALESMAN", "06) Salesman Performance"),
+                                ("CUSTOMERS", "07) Top 10 Customers"),
+                                ("SKUS", "08) Top 10 SKU"),
+                                ("TALABAT", "09) Talabat Summary"),
+                                ("INSIGHTS", "10) Executive Insights"),
+                                ("APPENDIX", "11) Appendix Tables"),
+                            ]
 
-                                if "fig_trend_new" in globals() and fig_trend_new is not None:
-                                    figs_dict["Daily Sales Trend"] = fig_trend_new
+                            AUTO_10 = ["TITLE","KPI","TREND","CHANNEL","CHANNEL_TREND","SALESMAN","CUSTOMERS","SKUS","TALABAT","INSIGHTS"]
 
-                                if "fig_channel_new" in globals() and fig_channel_new is not None:
-                                    figs_dict["Market vs E-com Sales"] = fig_channel_new
+                            ppt_mode = st.radio(
+                                "PPT Mode",
+                                ["Auto (10 Slides)", "Custom (Select up to 10 Slides)"],
+                                horizontal=True,
+                                key="ppt_mode_download_hub"
+                            )
 
-                                if "fig_target_new" in globals() and fig_target_new is not None:
-                                    figs_dict["Daily KA Target vs Actual"] = fig_target_new
+                            if ppt_mode == "Auto (10 Slides)":
+                                selected_slide_keys = AUTO_10
+                                st.caption("✅ Auto mode: Generates full 10-slide management pack.")
+                            else:
+                                labels = [lbl for _, lbl in SLIDE_CATALOG]
+                                chosen_labels = st.multiselect("Select slides (max 10)", labels, key="ppt_custom_slide_select")
+                                label_to_key = {lbl: key for key, lbl in SLIDE_CATALOG}
+                                selected_slide_keys = [label_to_key[l] for l in chosen_labels]
+                                if len(selected_slide_keys) > 10:
+                                    st.error("⚠️ Max 10 slides only. Please remove extra slides.")
+                                    selected_slide_keys = selected_slide_keys[:10]
 
-                                if "fig_salesman_new" in globals() and fig_salesman_new is not None:
-                                    figs_dict["Salesman KA Target vs Actual"] = fig_salesman_new
+                            st.info(f"Slides selected: {len(selected_slide_keys)}")
 
-                                if "fig_top10_new" in globals() and fig_top10_new is not None:
-                                    figs_dict["Top 10 Customers by Sales"] = fig_top10_new
+                            # Build figures from current chart scope
+                            figs_dict = {}
+                            if 'fig_trend' in locals() and fig_trend is not None:
+                                figs_dict['TREND'] = fig_trend
+                            if 'fig_pizza' in locals() and fig_pizza is not None:
+                                figs_dict['CHANNEL'] = fig_pizza
+                            elif 'fig_bar' in locals() and fig_bar is not None:
+                                figs_dict['CHANNEL'] = fig_bar
+                            if 'fig_area' in locals() and fig_area is not None:
+                                figs_dict['CHANNEL_TREND'] = fig_area
+                            if 'fig_ach' in locals() and fig_ach is not None:
+                                figs_dict['SALESMAN'] = fig_ach
+                            if 'fig_top10c' in locals() and fig_top10c is not None:
+                                figs_dict['CUSTOMERS'] = fig_top10c
+                            if 'fig_top10s' in locals() and fig_top10s is not None:
+                                figs_dict['SKUS'] = fig_top10s
 
-                                talabat_ppt_tables = {
-                                    "billing_split": talabat_billing_split if "talabat_billing_split" in locals() else pd.DataFrame(),
-                                    "customers": talabat_customer_table.head(25) if ("talabat_customer_table" in locals() and isinstance(talabat_customer_table, pd.DataFrame)) else pd.DataFrame(),
-                                }
+                            talabat_ppt_tables = {
+                                'billing_split': talabat_billing_split if 'talabat_billing_split' in locals() else pd.DataFrame(),
+                                'customers': talabat_customer_table.head(25) if ('talabat_customer_table' in locals() and isinstance(talabat_customer_table, pd.DataFrame)) else pd.DataFrame(),
+                            }
 
-                                pptx_stream = create_pptx(
-                                    report_df_with_total,
-                                    billing_df,
-                                    py_table_with_total,
-                                    figs_dict,
-                                    kpi_data,
-                                    talabat_tables=talabat_ppt_tables
-                                )
+                            report_df_safe = report_df_with_total if 'report_df_with_total' in locals() else pd.DataFrame()
+                            billing_df_safe = billing_df if 'billing_df' in locals() else pd.DataFrame()
+                            py_table_safe = py_table_with_total if 'py_table_with_total' in locals() else pd.DataFrame()
+                            kpi_data_safe = kpi_data if 'kpi_data' in locals() else {}
 
-                                st.download_button(
-                                    texts[lang]["download_pptx"],
-                                    pptx_stream,
-                                    file_name=f"sales_report_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.pptx",
-                                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                                )
+                            top_customer_share = 0.0
+                            try:
+                                if not py_table_safe.empty and 'Sales' in py_table_safe.columns:
+                                    _sales = pd.to_numeric(py_table_safe['Sales'], errors='coerce').fillna(0)
+                                    _total = float(_sales.sum())
+                                    top_customer_share = float(_sales.head(5).sum() / _total * 100) if _total > 0 else 0.0
+                            except Exception:
+                                pass
 
-                                # Audit safe
-                                if "audit_log" in st.session_state:
-                                    st.session_state["audit_log"].append({
-                                        "user": username,
-                                        "action": "download",
-                                        "details": "PPTX Report",
-                                        "timestamp": datetime.now()
-                                    })
+                            top_sku_share = 0.0
+                            try:
+                                if 'top10_sku' in locals() and isinstance(top10_sku, pd.DataFrame) and not top10_sku.empty:
+                                    _sku_sales = pd.to_numeric(top10_sku['Sales'], errors='coerce').fillna(0)
+                                    _grand = float(pd.to_numeric(df_filtered['Net Value'], errors='coerce').fillna(0).sum()) if 'df_filtered' in locals() else 0.0
+                                    top_sku_share = float(_sku_sales.head(5).sum() / _grand * 100) if _grand > 0 else 0.0
+                            except Exception:
+                                pass
+
+                            extra_context = {
+                                'prepared_by': st.session_state.get('name', 'Mohamed Haneef'),
+                                'report_title': 'Khazan Sales Dashboard – MTD Management Report',
+                                'period_text': f"Period: {date_range[0].strftime('%d %b %Y')} to {date_range[1].strftime('%d %b %Y')}" if 'date_range' in locals() else datetime.now().strftime('%d %b %Y'),
+                                'top_customer_share': top_customer_share,
+                                'top_sku_share': top_sku_share,
+                                'retail_share': retail_sales_pct if 'retail_sales_pct' in locals() else 0.0,
+                                'ecom_share': ecom_sales_pct if 'ecom_sales_pct' in locals() else 0.0,
+                                'mtd_achievement': achievement_mtd if 'achievement_mtd' in locals() else 0.0,
+                            }
+
+                            pptx_stream = create_pptx(
+                                report_df_safe,
+                                billing_df_safe,
+                                py_table_safe,
+                                figs_dict,
+                                kpi_data_safe,
+                                talabat_tables=talabat_ppt_tables,
+                                selected_slide_keys=selected_slide_keys,
+                                slide_catalog=SLIDE_CATALOG,
+                                extra_context=extra_context,
+                            )
+
+                            st.download_button(
+                                '⬇️ Download PPTX',
+                                pptx_stream,
+                                file_name=f"sales_report_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.pptx",
+                                mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                                use_container_width=True,
+                                key='download_pptx_hub_btn'
+                            )
+
+                            # Optional: one-click management pack zip
+                            try:
+                                raw_df_safe = df_filtered.copy() if 'df_filtered' in locals() else pd.DataFrame()
+                            except Exception:
+                                raw_df_safe = pd.DataFrame()
+
+                            pack_buffer = io.BytesIO()
+                            with zipfile.ZipFile(pack_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                                zf.writestr(f"sales_report_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.pptx", pptx_stream.getvalue())
+                                if not report_df_safe.empty:
+                                    zf.writestr('mtd_summary.xlsx', to_excel_bytes(report_df_safe, sheet_name='MTD_Summary', index=False))
+                                if not billing_df_safe.empty:
+                                    zf.writestr('billing_summary.xlsx', to_excel_bytes(billing_df_safe.reset_index(), sheet_name='Billing', index=False))
+                                if not py_table_safe.empty:
+                                    zf.writestr('customer_summary.xlsx', to_excel_bytes(py_table_safe.reset_index(), sheet_name='Customers', index=False))
+                                if not raw_df_safe.empty:
+                                    zf.writestr('raw_filtered_data.xlsx', to_excel_bytes(raw_df_safe, sheet_name='Raw_Data', index=False))
+                            pack_buffer.seek(0)
+
+                            st.download_button(
+                                '⬇️ Download Management Pack (.zip)',
+                                data=pack_buffer.getvalue(),
+                                file_name=f"management_pack_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.zip",
+                                mime='application/zip',
+                                use_container_width=True,
+                                key='download_management_pack_zip'
+                            )
+
+                            if 'audit_log' in st.session_state:
+                                st.session_state['audit_log'].append({
+                                    'user': username,
+                                    'action': 'download',
+                                    'details': f'PPTX / Pack ({ppt_mode})',
+                                    'timestamp': datetime.now()
+                                })
 
                         # --------------------------
                         # COL 2: EXCEL DOWNLOADS
@@ -5925,6 +6134,44 @@ elif choice == "💰 Profit & Margin":
                 return col
         return None
 
+    def fmt_num(v):
+        try:
+            return f"{float(v):,.0f}"
+        except Exception:
+            return "0"
+
+    def fmt_pct(v):
+        try:
+            return f"{float(v):.0f}%"
+        except Exception:
+            return "0%"
+
+    def format_df_decimals(df, num_cols=None, pct_cols=None, decimals=0):
+        """
+        Format dataframe as strings without Pandas Styler.
+        decimals can be 0 / 2 / 3
+        """
+        out = df.copy()
+        num_cols = num_cols or []
+        pct_cols = pct_cols or []
+
+        num_fmt = f"{{:,.{decimals}f}}"
+        pct_fmt = f"{{:.{decimals}f}}%"
+
+        for c in num_cols:
+            if c in out.columns:
+                out[c] = pd.to_numeric(out[c], errors="coerce").map(
+                    lambda x: num_fmt.format(x) if pd.notna(x) else ""
+                )
+
+        for c in pct_cols:
+            if c in out.columns:
+                out[c] = pd.to_numeric(out[c], errors="coerce").map(
+                    lambda x: pct_fmt.format(x) if pd.notna(x) else ""
+                )
+
+        return out
+
     # ─── Price list status ─────────────────────────────────────────────────
     price_df = st.session_state.get("price_df", pd.DataFrame())
     if price_df.empty:
@@ -5932,7 +6179,7 @@ elif choice == "💰 Profit & Margin":
     else:
         st.success(f"Price list loaded ({len(price_df):,} rows)")
         with st.expander("Price List Preview (first 8 rows)", expanded=False):
-            st.dataframe(price_df.head(8))
+            st.dataframe(price_df.head(8), use_container_width=True, hide_index=True)
 
     # ─── Data source selection ─────────────────────────────────────────────
     data_source = st.radio(
@@ -5960,6 +6207,10 @@ elif choice == "💰 Profit & Margin":
     QTY_COL      = find_column(base_df, ["Quantity", "Qty", "Sales Qty"])
     UOM_COL      = find_column(base_df, ["UOM", "Unit of Measure", "Unit"])
     NET_COL      = find_column(base_df, ["Net Value", "Net Amount", "Net Sales", "Amount"])
+    DATE_COL     = find_column(base_df, ["Billing Date", "Date"])
+    CUSTOMER_COL = find_column(base_df, ["PY Name 1", "Customer", "Customer Name"])
+    DRIVER_COL   = find_column(base_df, ["Driver Name EN", "Salesman"])
+    BRANCH_COL   = find_column(base_df, ["SP Name1", "Branch", "Branch Name"])
 
     PRICE_MAT_COL = find_column(price_df, ["Material Description", "Mat Description", "Description"])
     COST_COL      = find_column(price_df, ["Cost Price", "Cost", "Unit Cost"])
@@ -5974,6 +6225,7 @@ elif choice == "💰 Profit & Margin":
     if MATERIAL_COL is None: missing.append("Material Description (main data)")
     if QTY_COL      is None: missing.append("Quantity")
     if NET_COL      is None: missing.append("Net Value / Net Amount")
+    if DATE_COL     is None: missing.append("Billing Date")
     if not price_df.empty:
         if PRICE_MAT_COL is None: missing.append("Material Description (price list)")
         if COST_COL      is None: missing.append("Cost Price")
@@ -5983,20 +6235,23 @@ elif choice == "💰 Profit & Margin":
         st.stop()
 
     # ─── Date range filter ─────────────────────────────────────────────────
+    base_df[DATE_COL] = pd.to_datetime(base_df[DATE_COL], errors="coerce")
+    base_df = base_df.dropna(subset=[DATE_COL])
+
     col1, col2 = st.columns(2)
     with col1:
-        min_date = base_df["Billing Date"].min().date() if "Billing Date" in base_df.columns else datetime.date.today()
+        min_date = base_df[DATE_COL].min().date()
         start_date = st.date_input("Start Date", value=min_date)
     with col2:
-        max_date = base_df["Billing Date"].max().date() if "Billing Date" in base_df.columns else datetime.date.today()
+        max_date = base_df[DATE_COL].max().date()
         end_date = st.date_input("End Date", value=max_date)
 
     start_dt = pd.to_datetime(start_date)
     end_dt   = pd.to_datetime(end_date) + pd.Timedelta(days=1)
 
     df_pm = base_df[
-        (base_df["Billing Date"] >= start_dt) &
-        (base_df["Billing Date"] < end_dt)
+        (base_df[DATE_COL] >= start_dt) &
+        (base_df[DATE_COL] < end_dt)
     ].copy()
 
     if df_pm.empty:
@@ -6007,53 +6262,67 @@ elif choice == "💰 Profit & Margin":
     df_val = df_pm.copy()
     df_val["_mat_norm"] = df_val[MATERIAL_COL].astype(str).str.strip().str.upper()
 
-    df_val["Cost Price"]  = pd.NA
-    df_val["Pack Size"]   = pd.NA
-    df_val["Category"]    = pd.NA
-# ─── Customer normalization (for R&R / contracts) ─────────────────────
-    if "PY Name 1" in df_val.columns:
+    df_val["Cost Price"] = pd.NA
+    df_val["Pack Size"] = pd.NA
+    df_val["Category"] = pd.NA
+
+    if CUSTOMER_COL and CUSTOMER_COL in df_val.columns:
         df_val["_py_name_norm"] = (
-            df_val["PY Name 1"]
+            df_val[CUSTOMER_COL]
             .astype(str)
             .str.strip()
-            .str.lower()
+            .str.upper()
         )
     else:
         df_val["_py_name_norm"] = ""
 
     # ─── Price list mapping ────────────────────────────────────────────────
     if not price_df.empty and PRICE_MAT_COL:
+        price_df = price_df.copy()
         price_df["_mat_norm"] = price_df[PRICE_MAT_COL].astype(str).str.strip().str.upper()
+        price_df = price_df.drop_duplicates("_mat_norm", keep="first")
         price_map = price_df.set_index("_mat_norm")
 
-        df_val["Cost Price"] = df_val["_mat_norm"].map(price_map.get(COST_COL))
-        if PACK_COL:
-            df_val["Pack Size"] = df_val["_mat_norm"].map(price_map.get(PACK_COL))
-        if CATEGORY_COL:
-            df_val["Category"] = df_val["_mat_norm"].map(price_map.get(CATEGORY_COL))
+        if COST_COL in price_map.columns:
+            df_val["Cost Price"] = df_val["_mat_norm"].map(price_map[COST_COL])
+
+        if PACK_COL and PACK_COL in price_map.columns:
+            df_val["Pack Size"] = df_val["_mat_norm"].map(price_map[PACK_COL])
+
+        if CATEGORY_COL and CATEGORY_COL in price_map.columns:
+            df_val["Category"] = df_val["_mat_norm"].map(price_map[CATEGORY_COL])
+
+    df_val["Category"] = df_val["Category"].fillna("Unmapped")
 
     # ─── Cost calculation ──────────────────────────────────────────────────
+    df_val[QTY_COL] = pd.to_numeric(df_val[QTY_COL], errors="coerce").fillna(0)
+    df_val[NET_COL] = pd.to_numeric(df_val[NET_COL], errors="coerce").fillna(0)
+    df_val["Cost Price"] = pd.to_numeric(df_val["Cost Price"], errors="coerce")
+    df_val["Pack Size"] = pd.to_numeric(df_val["Pack Size"], errors="coerce")
+
     def calculate_line_cost(row):
         if pd.isna(row["Cost Price"]):
-            return None
-        qty   = pd.to_numeric(row.get(QTY_COL), errors='coerce') or 0
-        cost  = pd.to_numeric(row["Cost Price"], errors='coerce')
-        uom   = str(row.get(UOM_COL, "")).strip().upper()
-        pack  = pd.to_numeric(row.get("Pack Size"), errors='coerce')
+            return np.nan
+
+        qty = pd.to_numeric(row.get(QTY_COL), errors="coerce")
+        qty = 0 if pd.isna(qty) else qty
+        cost = pd.to_numeric(row["Cost Price"], errors="coerce")
+        uom = str(row.get(UOM_COL, "")).strip().upper() if UOM_COL else ""
+        pack = pd.to_numeric(row.get("Pack Size"), errors="coerce")
+
+        if pd.isna(cost):
+            return np.nan
 
         if uom == "KAR":
             if pd.isna(pack) or pack <= 0:
-                return None
+                return np.nan
             return qty * pack * cost
+
         return qty * cost
 
     df_val["Total Cost"] = df_val.apply(calculate_line_cost, axis=1)
 
-    # ─── Discount calculation ──────────────────────────────────────────────
-    df_val[NET_COL] = pd.to_numeric(df_val[NET_COL], errors='coerce').fillna(0)
-
-    # ✅ FIX #1: Return/Cancel rows cost reversal (prevents wrong Discount Value)
-    # If Net Value is negative but Total Cost is positive, flip cost to negative (cost reversal)
+    # If return/cancel rows are negative, reverse cost also
     df_val.loc[
         (df_val[NET_COL] < 0) &
         (df_val["Total Cost"].notna()) &
@@ -6061,45 +6330,41 @@ elif choice == "💰 Profit & Margin":
         "Total Cost"
     ] *= -1
 
-    # Now Discount Value becomes correct for both Sales and Returns
+    # ─── Discount calculation ──────────────────────────────────────────────
     df_val["Discount Value"] = df_val[NET_COL] - df_val["Total Cost"].fillna(0)
 
-    # ✅ FIX #2: Discount % only for SALES (Net >= 0) and based on Cost
-    cost_safe = df_val["Total Cost"].replace(0, np.nan)
+    cost_safe = df_val["Total Cost"].abs().replace(0, np.nan)
     df_val["Discount %"] = np.where(
         df_val[NET_COL] >= 0,
-        (abs(df_val["Discount Value"]) / cost_safe * 100),
+        (df_val["Discount Value"].abs() / cost_safe * 100),
         0
     )
-    df_val["Discount %"] = pd.to_numeric(df_val["Discount %"], errors="coerce").fillna(0).round(2)
+    df_val["Discount %"] = pd.to_numeric(df_val["Discount %"], errors="coerce").fillna(0)
 
     df_val["⚠ Cost Missing"] = df_val["Cost Price"].isna()
 
-    if UOM_COL in df_val.columns:
+    if UOM_COL and UOM_COL in df_val.columns:
         df_val["⚠ Pack Missing (KAR)"] = (
-            df_val[UOM_COL].astype(str).str.upper() == "KAR"
+            df_val[UOM_COL].astype(str).str.upper().eq("KAR")
         ) & df_val["Pack Size"].isna()
     else:
         df_val["⚠ Pack Missing (KAR)"] = False
 
     # ============================================================
-    # ✅ NEW: R&R (Rebate % + Display Rental value) mapping & logic
+    # R&R (Rebate % + Display Rental value)
     # ============================================================
     rr_df = st.session_state.get("rr_df", pd.DataFrame())
 
-    RR_CUST_COL   = find_column(rr_df, ["PY Name 1", "Customer", "Customer Name"])
-    REBATE_COL    = find_column(rr_df, ["Rebate %", "Rebate", "Rebate Percent", "Rebate%"])
-    RENTAL_COL    = find_column(rr_df, ["Display Rental value", "Display Rental", "Rental", "Annual Rental", "Rental Value"])
+    RR_CUST_COL = find_column(rr_df, ["PY Name 1", "Customer", "Customer Name"])
+    REBATE_COL  = find_column(rr_df, ["Rebate %", "Rebate", "Rebate Percent", "Rebate%"])
+    RENTAL_COL  = find_column(rr_df, ["Display Rental value", "Display Rental", "Rental", "Annual Rental", "Rental Value"])
 
-    # defaults (so page never breaks)
     df_val["Rebate %"] = 0.0
     df_val["Display Rental value"] = 0.0
 
-    if not rr_df.empty and RR_CUST_COL and (REBATE_COL or RENTAL_COL) and ("PY Name 1" in df_val.columns):
+    if not rr_df.empty and RR_CUST_COL and CUSTOMER_COL:
         rr_tmp = rr_df.copy()
         rr_tmp["_py_name_norm"] = rr_tmp[RR_CUST_COL].astype(str).str.strip().str.upper()
-
-        df_val["_py_name_norm"] = df_val["PY Name 1"].astype(str).str.strip().str.upper()
 
         if REBATE_COL:
             rr_tmp["Rebate %"] = pd.to_numeric(rr_tmp[REBATE_COL], errors="coerce").fillna(0)
@@ -6111,81 +6376,86 @@ elif choice == "💰 Profit & Margin":
         else:
             rr_tmp["Display Rental value"] = 0.0
 
+        rr_tmp = rr_tmp.drop_duplicates("_py_name_norm", keep="first")
         rr_map = rr_tmp.set_index("_py_name_norm")[["Rebate %", "Display Rental value"]]
 
         df_val["Rebate %"] = df_val["_py_name_norm"].map(rr_map["Rebate %"]).fillna(0.0)
         df_val["Display Rental value"] = df_val["_py_name_norm"].map(rr_map["Display Rental value"]).fillna(0.0)
-    else:
-        # keep defaults; optional info (no stop)
-        pass
-
-    # Rebate Value applies only on positive sales (avoid confusion on returns)
-    # ============================================================
-    # ✅ CONTRACT-COMPLIANT REBATE CALCULATION (NET VALUE BASED)
-    # ============================================================
-
-    # Net Value must remain untouched (contract rule)
-    df_val[NET_COL] = pd.to_numeric(df_val[NET_COL], errors="coerce").fillna(0)
-
-    # Rebate % numeric safety
-    df_val["Rebate %"] = pd.to_numeric(
-        df_val["Rebate %"],
-        errors="coerce"
-    ).fillna(0)
-    # --- R&R mapping done above ---
-
-    
 
     # ============================================================
-    # ✅ REBATE – STRICTLY BASED ON NET VALUE (CONTRACT RULE)
+    # REBATE LOGIC — CUSTOMER NET SALES BASIS
     # ============================================================
+    cust_net_sales = (
+        df_val.groupby("_py_name_norm")[NET_COL]
+        .sum()
+    )
 
-    # Safety
-    df_val[NET_COL] = pd.to_numeric(df_val[NET_COL], errors="coerce").fillna(0)
-    df_val["Rebate %"] = pd.to_numeric(df_val["Rebate %"], errors="coerce").fillna(0)
+    cust_rebate_pct = (
+        df_val.groupby("_py_name_norm")["Rebate %"]
+        .first()
+        .fillna(0)
+    )
 
-    # 1️⃣ Customer-level NET VALUE (sales + returns)
-    cust_net = (
-        df_val
+    # safer: rebate never below zero
+    cust_rebate_value = ((cust_net_sales.clip(lower=0)) * (cust_rebate_pct / 100.0)).fillna(0.0)
+
+    df_val["_cust_rebate_total"] = df_val["_py_name_norm"].map(cust_rebate_value).fillna(0.0)
+
+    cust_pos_sales_for_rebate = (
+        df_val[df_val[NET_COL] > 0]
         .groupby("_py_name_norm")[NET_COL]
         .sum()
     )
 
-    # 2️⃣ Customer-level REBATE (only on net)
-    cust_rebate = (
-        cust_net *
-        (df_val.groupby("_py_name_norm")["Rebate %"].first() / 100)
-    ).fillna(0)
+    df_val["_cust_pos_sales_for_rebate"] = df_val["_py_name_norm"].map(cust_pos_sales_for_rebate).fillna(0.0)
 
-    # 3️⃣ Map back to dataframe (same value per customer)
-    df_val["Rebate Value"] = df_val["_py_name_norm"].map(cust_rebate).fillna(0)
+    df_val["_rebate_share"] = np.where(
+        (df_val[NET_COL] > 0) & (df_val["_cust_pos_sales_for_rebate"] > 0),
+        df_val[NET_COL] / df_val["_cust_pos_sales_for_rebate"],
+        0.0
+    )
 
+    df_val["Rebate Value"] = (
+        df_val["_cust_rebate_total"] * df_val["_rebate_share"]
+    ).fillna(0.0)
 
-    
+    df_val["Rebate Applied"] = df_val["Rebate Value"] != 0
 
-    # Audit helper flag (optional but useful)
-    df_val["Rebate Applied"] = df_val[NET_COL] > 0
-
-
-    # Allocate annual rental to the selected period (by days in range), then distribute by sales share per customer
+    # ============================================================
+    # Rental allocation
+    # annual rental -> selected period rental -> distribute by positive sales share
+    # ============================================================
     period_days = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
     year_factor = period_days / 365.0
 
-    # annual rental for period
+    cust_pos_sales = (
+        df_val[df_val[NET_COL] > 0]
+        .groupby("_py_name_norm")[NET_COL]
+        .sum()
+    )
+
+    df_val["_cust_pos_sales"] = df_val["_py_name_norm"].map(cust_pos_sales).fillna(0)
     df_val["_period_rental"] = df_val["Display Rental value"] * year_factor
 
-    # sales share per customer (only positive net)
-    pos_sales = df_val[df_val[NET_COL] > 0].groupby("_py_name_norm")[NET_COL].sum()
-    df_val["_cust_pos_sales"] = df_val["_py_name_norm"].map(pos_sales)
     df_val["_sales_share"] = np.where(
-        (df_val[NET_COL] > 0) & (df_val["_cust_pos_sales"].notna()) & (df_val["_cust_pos_sales"] != 0),
+        (df_val[NET_COL] > 0) & (df_val["_cust_pos_sales"] > 0),
         df_val[NET_COL] / df_val["_cust_pos_sales"],
         0.0
     )
 
-    df_val["Allocated Rental"] = (df_val["_period_rental"] * df_val["_sales_share"]).fillna(0.0)
+    df_val["Allocated Rental"] = (
+        df_val["_period_rental"] * df_val["_sales_share"]
+    ).fillna(0.0)
 
-    # Effective profit after Discount + Rebate + Rental
+    # ─── Profit metrics ────────────────────────────────────────────────────
+    df_val["Gross Profit"] = df_val[NET_COL] - df_val["Total Cost"].fillna(0)
+
+    df_val["Margin %"] = np.where(
+        df_val[NET_COL] != 0,
+        (df_val["Gross Profit"] / df_val[NET_COL]) * 100,
+        0.0
+    )
+
     df_val["Effective Profit"] = (
         df_val[NET_COL]
         - df_val["Total Cost"].fillna(0)
@@ -6193,20 +6463,22 @@ elif choice == "💰 Profit & Margin":
         - df_val["Allocated Rental"].fillna(0)
     )
 
+    # Margin on sales
     df_val["Effective Margin %"] = np.where(
         df_val[NET_COL] != 0,
         (df_val["Effective Profit"] / df_val[NET_COL]) * 100,
         0.0
     )
-    df_val["Effective Margin %"] = pd.to_numeric(df_val["Effective Margin %"], errors="coerce").fillna(0).round(2)
 
-    # clean helper cols used for allocation
-    for _c in ["_period_rental", "_cust_pos_sales", "_sales_share"]:
-        if _c in df_val.columns:
-            pass  # keep internal (not shown), safe
+    # Optional extra view: return on cost
+    df_val["Return on Cost %"] = np.where(
+        df_val["Total Cost"].abs() != 0,
+        (df_val["Effective Profit"] / df_val["Total Cost"].abs()) * 100,
+        0.0
+    )
 
     # ─── Category logic ────────────────────────────────────────────────────
-    sales_category_value  = 0.0
+    sales_category_value = 0.0
     return_category_value = 0.0
 
     has_category = "Category" in df_val.columns and df_val["Category"].notna().any()
@@ -6221,52 +6493,59 @@ elif choice == "💰 Profit & Margin":
             r"return|ret|refund|negative|adjustment|cr|debit|reverse|cancel|cn|zre|ykre|credit|deduction",
             na=False, regex=True
         )
-        sales_category_value  = df_val[pos_mask][NET_COL].sum()
+        sales_category_value = df_val[pos_mask][NET_COL].sum()
         return_category_value = df_val[ret_mask][NET_COL].sum()
     else:
-        sales_category_value  = df_val[df_val[NET_COL] >= 0][NET_COL].sum()
-        return_category_value = df_val[df_val[NET_COL] <  0][NET_COL].sum()
+        sales_category_value = df_val[df_val[NET_COL] >= 0][NET_COL].sum()
+        return_category_value = df_val[df_val[NET_COL] < 0][NET_COL].sum()
 
     # ─── Executive KPIs ────────────────────────────────────────────────────
     st.markdown("## 📌 Executive Summary")
 
-    total_net      = df_val[NET_COL].sum()
-    total_cost     = df_val["Total Cost"].sum(min_count=1)
+    total_net = df_val[NET_COL].sum()
+    total_cost = df_val["Total Cost"].sum(min_count=1)
     total_discount = df_val["Discount Value"].sum(min_count=1)
 
-    # ✅ (Keep same KPI style) but make Discount % based on Total Cost safely
-    overall_disc_pct = (total_discount / total_cost * 100) if total_cost != 0 else 0
+    overall_disc_pct = (
+        abs(total_discount) / abs(total_cost) * 100
+        if pd.notna(total_cost) and total_cost != 0 else 0
+    )
 
     cols = st.columns(7)
-    cols[0].metric("Total Net",           f"{total_net:,.2f}")
-    cols[1].metric("Total Cost",          f"{total_cost:,.2f}")
-    cols[2].metric("Discount Value",      f"{total_discount:,.2f}")
-    cols[3].metric("Discount %",          f"{overall_disc_pct:.2f}%")
-    cols[4].metric("Cost Missing Rows",   f"{df_val['⚠ Cost Missing'].sum():,}")
-    cols[5].metric("Positive / Sales Val", f"{sales_category_value:,.2f}")
-    cols[6].metric("Returns / Negative",   f"{return_category_value:,.2f}")
+    cols[0].metric("Total Net", fmt_num(total_net))
+    cols[1].metric("Total Cost", fmt_num(total_cost))
+    cols[2].metric("Discount Value", fmt_num(total_discount))
+    cols[3].metric("Discount %", fmt_pct(overall_disc_pct))
+    cols[4].metric("Cost Missing Rows", f"{int(df_val['⚠ Cost Missing'].sum()):,}")
+    cols[5].metric("Positive / Sales Val", fmt_num(sales_category_value))
+    cols[6].metric("Returns / Negative", fmt_num(return_category_value))
 
-    # ✅ NEW: R&R Executive Add-on (keeps your old KPIs unchanged)
+    # ✅ R&R Executive Add-on
     st.markdown("## 🧾 Contract (R&R) Impact")
 
     total_rebate = df_val["Rebate Value"].sum(min_count=1)
     total_rental = df_val["Allocated Rental"].sum(min_count=1)
-    total_eff_profit = df_val["Effective Profit"].sum(min_count=1)
+
+    total_eff_profit = (
+        df_val[NET_COL].sum()
+        - df_val["Total Cost"].fillna(0).sum()
+        - df_val["Rebate Value"].fillna(0).sum()
+        - df_val["Allocated Rental"].fillna(0).sum()
+    )
 
     cA, cB, cC, cD = st.columns(4)
-    cA.metric("Rebate Value", f"{total_rebate:,.2f}")
-    cB.metric("Allocated Rental (Period)", f"{total_rental:,.2f}")
-    cC.metric("Effective Profit (after R&R)", f"{total_eff_profit:,.2f}")
-    # effective margin (sales only)
+    cA.metric("Rebate Value", fmt_num(total_rebate))
+    cB.metric("Allocated Rental (Period)", fmt_num(total_rental))
+    cC.metric("Effective Profit (after R&R)", fmt_num(total_eff_profit))
+
     sales_only_net = df_val[df_val[NET_COL] > 0][NET_COL].sum()
     sales_only_eff_profit = df_val[df_val[NET_COL] > 0]["Effective Profit"].sum()
     eff_margin_pct = (sales_only_eff_profit / sales_only_net * 100) if sales_only_net else 0
-    cD.metric("Effective Margin % (Sales)", f"{eff_margin_pct:.2f}%")
+    cD.metric("Effective Margin % (Sales)", fmt_pct(eff_margin_pct))
 
     # ============================================================
-    # 📊 EXECUTIVE SUMMARY – CATEGORY PERFORMANCE (FINAL)
+    # Category Performance
     # ============================================================
-
     st.markdown("## 📊 Executive Summary – Category Performance")
 
     if "Category" not in df_val.columns or df_val["Category"].isna().all():
@@ -6287,8 +6566,8 @@ elif choice == "💰 Profit & Margin":
         data = category_summary.to_dict("records")
 
         for i in range(0, len(data), kpi_per_row):
-            cols = st.columns(len(data[i:i + kpi_per_row]))
-            for col, row in zip(cols, data[i:i + kpi_per_row]):
+            cols_cat = st.columns(len(data[i:i + kpi_per_row]))
+            for col, row in zip(cols_cat, data[i:i + kpi_per_row]):
                 with col:
                     st.metric(
                         label=str(row["Category"]),
@@ -6307,15 +6586,15 @@ elif choice == "💰 Profit & Margin":
 
         total_net_value = category_contribution["Net Value"].sum()
 
-        category_contribution["Contribution %"] = (
-            category_contribution["Net Value"] / total_net_value * 100
-        ).round(1)
+        category_contribution["Contribution %"] = np.where(
+            total_net_value != 0,
+            category_contribution["Net Value"] / total_net_value * 100,
+            0
+        ).round(0)
 
         insight_lines = [
-            f"• **{row['Category']}** → {row['Contribution %']}%"
-            for _, row in category_contribution
-                .sort_values("Contribution %", ascending=False)
-                .iterrows()
+            f"• **{row['Category']}** → {row['Contribution %']:.0f}%"
+            for _, row in category_contribution.sort_values("Contribution %", ascending=False).iterrows()
         ]
 
         st.markdown("  \n".join(insight_lines))
@@ -6323,58 +6602,70 @@ elif choice == "💰 Profit & Margin":
     # ─── Data Quality ──────────────────────────────────────────────────────
     st.markdown("### 🧪 Data Quality")
     dq1, dq2, dq3 = st.columns(3)
-    dq1.metric("Cost Mapped %", f"{100 - df_val['⚠ Cost Missing'].mean()*100:.1f}%")
-    dq2.metric("KAR Pack Mapped %", f"{100 - df_val.get('⚠ Pack Missing (KAR)', pd.Series(0)).mean()*100:.1f}%")
-    dq3.metric("Negative Discount Rows", int((df_val["Discount Value"] < 0).sum()))
+    dq1.metric("Cost Mapped %", f"{100 - df_val['⚠ Cost Missing'].mean()*100:.0f}%")
+    dq2.metric("KAR Pack Mapped %", f"{100 - df_val['⚠ Pack Missing (KAR)'].mean()*100:.0f}%")
+    dq3.metric("Negative Discount Rows", f"{int((df_val['Discount Value'] < 0).sum()):,}")
 
     # ─── Material level summary ────────────────────────────────────────────
     st.markdown("### 🔍 Material Discount Hotspots")
 
-    agg_dict = {}
-    if NET_COL in df_val.columns:
-        agg_dict["Net_Value"] = (NET_COL, "sum")
-    if "Discount %" in df_val.columns:
-        agg_dict["Avg_Discount_Pct"] = ("Discount %", "mean")
-    if "Discount Value" in df_val.columns:
-        agg_dict["Discount_Value"] = ("Discount Value", "sum")
-    if "Total Cost" in df_val.columns:
-        agg_dict["Total_Cost"] = ("Total Cost", "sum")
-    # ✅ NEW (optional) include effective margin
-    if "Effective Profit" in df_val.columns:
-        agg_dict["Effective_Profit"] = ("Effective Profit", "sum")
+    material_summary = (
+        df_val.groupby(MATERIAL_COL, dropna=True)
+              .agg(
+                  Net_Value=(NET_COL, "sum"),
+                  Discount_Value=("Discount Value", "sum"),
+                  Total_Cost=("Total Cost", "sum"),
+                  Rebate_Value=("Rebate Value", "sum"),
+                  Rental_Allocated=("Allocated Rental", "sum"),
+                  Effective_Profit=("Effective Profit", "sum"),
+              )
+              .reset_index()
+    )
 
-    if agg_dict:
-        material_summary = (
-            df_val.groupby(MATERIAL_COL, dropna=True)
-                  .agg(**agg_dict)
-                  .reset_index()
-        )
+    material_summary["Weighted_Discount_Pct"] = np.where(
+        material_summary["Total_Cost"].abs() != 0,
+        (material_summary["Discount_Value"].abs() / material_summary["Total_Cost"].abs()) * 100,
+        0
+    )
 
-        if "Discount_Value" in material_summary.columns:
-            cA, cB = st.columns(2)
-            with cA:
-                st.caption("🔴 Top biggest discount / loss makers")
-                st.dataframe(
-                    material_summary.sort_values("Discount_Value").head(12),
-                    use_container_width=True
-                )
-            with cB:
-                st.caption("🟢 Top most profitable (lowest discount)")
-                st.dataframe(
-                    material_summary.sort_values("Discount_Value", ascending=False).head(12),
-                    use_container_width=True
-                )
-        else:
-            st.dataframe(material_summary, use_container_width=True)
-    else:
-        st.info("No numeric columns available for material summary.")
+    material_summary["Effective Margin %"] = np.where(
+        material_summary["Net_Value"] != 0,
+        (material_summary["Effective_Profit"] / material_summary["Net_Value"]) * 100,
+        0
+    )
+
+    material_summary["Return on Cost %"] = np.where(
+        material_summary["Total_Cost"].abs() != 0,
+        (material_summary["Effective_Profit"] / material_summary["Total_Cost"].abs()) * 100,
+        0
+    )
+
+    st.caption("🔴 Top biggest discount / loss makers")
+
+    material_hotspots = material_summary.sort_values("Discount_Value").head(12).copy()
+
+    st.dataframe(
+        material_hotspots.style.format({
+            "Net_Value": "{:,.0f}",
+            "Weighted_Discount_Pct": "{:.0f}%",
+            "Discount_Value": "{:,.0f}",
+            "Total_Cost": "{:,.0f}",
+            "Rebate_Value": "{:,.0f}",
+            "Rental_Allocated": "{:,.0f}",
+            "Effective_Profit": "{:,.0f}",
+            "Effective Margin %": "{:.0f}%",
+            "Return on Cost %": "{:.0f}%"
+        }),
+        use_container_width=True,
+        hide_index=True
+    )
 
     # ─── Quick Filters ─────────────────────────────────────────────────────
     st.markdown("### 🎯 Quick Filters")
     f1, f2, f3 = st.columns(3)
-    show_negative     = f1.checkbox("Only negative discount", key="pm_neg")
-    show_cost_missing = f2.checkbox("Only cost missing",      key="pm_cost")
-    show_kar_issues   = f3.checkbox("Only KAR pack issues",   key="pm_kar")
+    show_negative = f1.checkbox("Only negative discount", key="pm_neg")
+    show_cost_missing = f2.checkbox("Only cost missing", key="pm_cost")
+    show_kar_issues = f3.checkbox("Only KAR pack issues", key="pm_kar")
 
     display_df = df_val.copy()
     if show_negative:
@@ -6382,49 +6673,73 @@ elif choice == "💰 Profit & Margin":
     if show_cost_missing:
         display_df = display_df[display_df["⚠ Cost Missing"]]
     if show_kar_issues:
-        display_df = display_df[display_df.get("⚠ Pack Missing (KAR)", False)]
+        display_df = display_df[display_df["⚠ Pack Missing (KAR)"]]
 
     # ─── Final table ───────────────────────────────────────────────────────
     st.subheader(f"Result: {len(display_df):,} rows  •  {start_date} → {end_date}")
 
     final_cols = [
-        "Billing Date", "Driver Name EN", "PY Name 1",
+        DATE_COL, DRIVER_COL, CUSTOMER_COL,
         MATERIAL_COL, QTY_COL, UOM_COL,
         "Cost Price", "Pack Size", "Total Cost",
         NET_COL, "Discount Value", "Discount %",
-        # ✅ NEW: R&R columns
         "Rebate %", "Rebate Value", "Display Rental value", "Allocated Rental",
+        "Gross Profit", "Margin %",
         "Effective Profit", "Effective Margin %",
+        "Return on Cost %",
+        "Category",
         "⚠ Cost Missing", "⚠ Pack Missing (KAR)"
     ]
-    avail_cols = [c for c in final_cols if c in display_df.columns]
+    avail_cols = [c for c in final_cols if c and c in display_df.columns]
+
+    preview_rows = st.selectbox(
+        "Preview rows",
+        [100, 500, 1000, 5000, 10000],
+        index=2,
+        key="pm_preview_rows"
+    )
+
+    display_show = display_df[avail_cols].sort_values(DATE_COL, ascending=False).copy()
+    display_show = format_df_decimals(
+        display_show,
+        num_cols=[
+            "Cost Price", "Pack Size", "Total Cost", NET_COL,
+            "Discount Value", "Rebate Value", "Display Rental value",
+            "Allocated Rental", "Gross Profit", "Effective Profit"
+        ],
+        pct_cols=[
+            "Discount %", "Rebate %", "Margin %",
+            "Effective Margin %", "Return on Cost %"
+        ],
+        decimals=2
+    )
 
     st.dataframe(
-        display_df[avail_cols].sort_values("Billing Date", ascending=False),
+        display_show.head(preview_rows),
         use_container_width=True,
         hide_index=True
     )
+    st.caption(f"Showing {min(preview_rows, len(display_show)):,} of {len(display_show):,} rows")
 
-    # ✅ NEW: Customer contract compliance summary (R&R + Discount)
+    # ✅ Customer contract compliance summary
     st.markdown("## 📜 Customer Contract Compliance (Discount + Rebate + Rental)")
 
-    if "PY Name 1" in df_val.columns:
+    if CUSTOMER_COL and CUSTOMER_COL in df_val.columns:
         cust_sum = (
-            df_val.groupby("PY Name 1")
+            df_val.groupby(CUSTOMER_COL)
                   .agg(
                       Net_Sales=(NET_COL, "sum"),
                       Total_Cost=("Total Cost", "sum"),
                       Discount_Value=("Discount Value", "sum"),
-                      Rebate_Value=("Rebate Value", "max"),
+                      Rebate_Value=("Rebate Value", "sum"),
                       Rental_Allocated=("Allocated Rental", "sum"),
                       Effective_Profit=("Effective Profit", "sum"),
                   )
                   .reset_index()
         )
 
-        # Leakage % on positive sales only (safer)
-        cust_pos_sales = df_val[df_val[NET_COL] > 0].groupby("PY Name 1")[NET_COL].sum()
-        cust_sum["_pos_sales"] = cust_sum["PY Name 1"].map(cust_pos_sales).fillna(0)
+        cust_pos_sales = df_val[df_val[NET_COL] > 0].groupby(CUSTOMER_COL)[NET_COL].sum()
+        cust_sum["_pos_sales"] = cust_sum[CUSTOMER_COL].map(cust_pos_sales).fillna(0)
 
         cust_sum["Total Leakage"] = (
             cust_sum["Discount_Value"].abs()
@@ -6436,41 +6751,82 @@ elif choice == "💰 Profit & Margin":
             cust_sum["_pos_sales"] != 0,
             (cust_sum["Total Leakage"] / cust_sum["_pos_sales"]) * 100,
             0
-        ).round(2)
+        )
 
         cust_sum["Effective Margin %"] = np.where(
             cust_sum["Net_Sales"] != 0,
             (cust_sum["Effective_Profit"] / cust_sum["Net_Sales"]) * 100,
             0
-        ).round(2)
+        )
+
+        cust_sum["Return on Cost %"] = np.where(
+            cust_sum["Total_Cost"].abs() != 0,
+            (cust_sum["Effective_Profit"] / cust_sum["Total_Cost"].abs()) * 100,
+            0
+        )
+
+        total_row_cust = pd.DataFrame([{
+            CUSTOMER_COL: "Total",
+            "Net_Sales": cust_sum["Net_Sales"].sum(),
+            "Total_Cost": cust_sum["Total_Cost"].sum(),
+            "Discount_Value": cust_sum["Discount_Value"].sum(),
+            "Rebate_Value": cust_sum["Rebate_Value"].sum(),
+            "Rental_Allocated": cust_sum["Rental_Allocated"].sum(),
+            "Total Leakage": cust_sum["Total Leakage"].sum(),
+            "_pos_sales": cust_sum["_pos_sales"].sum(),
+            "Effective_Profit": cust_sum["Effective_Profit"].sum(),
+        }])
+
+        total_row_cust["Leakage % (on Sales)"] = np.where(
+            total_row_cust["_pos_sales"] != 0,
+            (total_row_cust["Total Leakage"] / total_row_cust["_pos_sales"]) * 100,
+            0
+        )
+        total_row_cust["Effective Margin %"] = np.where(
+            total_row_cust["Net_Sales"] != 0,
+            (total_row_cust["Effective_Profit"] / total_row_cust["Net_Sales"]) * 100,
+            0
+        )
+        total_row_cust["Return on Cost %"] = np.where(
+            total_row_cust["Total_Cost"].abs() != 0,
+            (total_row_cust["Effective_Profit"] / total_row_cust["Total_Cost"].abs()) * 100,
+            0
+        )
+
+        cust_detail = cust_sum.sort_values("Leakage % (on Sales)", ascending=False).copy()
+        cust_final = pd.concat([cust_detail, total_row_cust], ignore_index=True)
 
         show_cols = [
-            "PY Name 1", "Net_Sales", "Total_Cost",
+            CUSTOMER_COL, "Net_Sales", "Total_Cost",
             "Discount_Value", "Rebate_Value", "Rental_Allocated",
             "Total Leakage", "Leakage % (on Sales)",
-            "Effective_Profit", "Effective Margin %"
+            "Effective_Profit", "Effective Margin %", "Return on Cost %"
         ]
 
+        cust_show = format_df_decimals(
+            cust_final[show_cols],
+            num_cols=[
+                "Net_Sales", "Total_Cost", "Discount_Value", "Rebate_Value",
+                "Rental_Allocated", "Total Leakage", "Effective_Profit"
+            ],
+            pct_cols=[
+                "Leakage % (on Sales)", "Effective Margin %", "Return on Cost %"
+            ],
+            decimals=3
+        )
+
         st.dataframe(
-            cust_sum[show_cols].sort_values("Leakage % (on Sales)", ascending=False),
+            cust_show,
             use_container_width=True,
             hide_index=True
         )
     else:
-        st.info("Customer column 'PY Name 1' not found for contract summary.")
+        st.info("Customer column not found for contract summary.")
 
     # ============================================================
-    # 📊 Category Contribution % (ONE-LINE INSIGHT)
+    # Category Contribution
     # ============================================================
-
     st.markdown("### 📊 Category Contribution")
-
-    df_val["Category"] = (
-        df_val["Category"]
-        .fillna("Unmapped")
-        .astype(str)
-        .str.strip()
-    )
 
     category_contribution = (
         df_val
@@ -6484,20 +6840,23 @@ elif choice == "💰 Profit & Margin":
 
     for _, row in category_contribution.sort_values("Net Value", ascending=False).iterrows():
         pct = (row["Net Value"] / total_net_value * 100) if total_net_value else 0
-        st.markdown(f"• **{row['Category']}** → {pct:.1f}%")
+        st.markdown(f"• **{row['Category']}** → {pct:.0f}%")
 
     # ============================================================
-    # 💰 Profit View – Margin by Category
+    # Profit View – Margin by Category
     # ============================================================
-
     st.markdown("## 💰 Profit View – Margin by Category")
 
     margin_by_category = (
         df_val
-        .groupby("Category")
+        .groupby("Category", dropna=False)
         .agg(
             Net_Value=(NET_COL, "sum"),
             Total_Cost=("Total Cost", "sum"),
+            Discount_Value=("Discount Value", "sum"),
+            Rebate_Value=("Rebate Value", "sum"),
+            Rental_Allocated=("Allocated Rental", "sum"),
+            Effective_Profit=("Effective Profit", "sum"),
         )
         .reset_index()
     )
@@ -6506,48 +6865,123 @@ elif choice == "💰 Profit & Margin":
         margin_by_category["Net_Value"] - margin_by_category["Total_Cost"]
     )
 
-    margin_by_category["Margin %"] = (
-        margin_by_category["Gross Profit"] /
-        margin_by_category["Net_Value"].replace(0, np.nan) * 100
-    ).round(1)
+    margin_by_category["Discount %"] = np.where(
+        margin_by_category["Total_Cost"].abs() != 0,
+        (margin_by_category["Discount_Value"].abs() / margin_by_category["Total_Cost"].abs()) * 100,
+        0
+    )
+
+    margin_by_category["Margin %"] = np.where(
+        margin_by_category["Net_Value"] != 0,
+        (margin_by_category["Gross Profit"] / margin_by_category["Net_Value"]) * 100,
+        0
+    )
+
+    margin_by_category["Effective Margin %"] = np.where(
+        margin_by_category["Net_Value"] != 0,
+        (margin_by_category["Effective_Profit"] / margin_by_category["Net_Value"]) * 100,
+        0
+    )
+
+    margin_by_category["Return on Cost %"] = np.where(
+        margin_by_category["Total_Cost"].abs() != 0,
+        (margin_by_category["Effective_Profit"] / margin_by_category["Total_Cost"].abs()) * 100,
+        0
+    )
+
+    total_row = pd.DataFrame([{
+        "Category": "Total",
+        "Net_Value": margin_by_category["Net_Value"].sum(),
+        "Total_Cost": margin_by_category["Total_Cost"].sum(),
+        "Discount_Value": margin_by_category["Discount_Value"].sum(),
+        "Rebate_Value": margin_by_category["Rebate_Value"].sum(),
+        "Rental_Allocated": margin_by_category["Rental_Allocated"].sum(),
+        "Effective_Profit": margin_by_category["Effective_Profit"].sum(),
+    }])
+
+    total_row["Gross Profit"] = total_row["Net_Value"] - total_row["Total_Cost"]
+    total_row["Discount %"] = np.where(
+        total_row["Total_Cost"].abs() != 0,
+        (total_row["Discount_Value"].abs() / total_row["Total_Cost"].abs()) * 100,
+        0
+    )
+    total_row["Margin %"] = np.where(
+        total_row["Net_Value"] != 0,
+        (total_row["Gross Profit"] / total_row["Net_Value"]) * 100,
+        0
+    )
+    total_row["Effective Margin %"] = np.where(
+        total_row["Net_Value"] != 0,
+        (total_row["Effective_Profit"] / total_row["Net_Value"]) * 100,
+        0
+    )
+    total_row["Return on Cost %"] = np.where(
+        total_row["Total_Cost"].abs() != 0,
+        (total_row["Effective_Profit"] / total_row["Total_Cost"].abs()) * 100,
+        0
+    )
+
+    margin_by_category = pd.concat(
+        [margin_by_category.sort_values("Net_Value", ascending=False), total_row],
+        ignore_index=True
+    )
+
+    def highlight_total_row(row):
+        if str(row["Category"]).strip().upper() == "TOTAL":
+            return ['background-color: #BFDBFE; color: #1E3A8A; font-weight: 900'] * len(row)
+        return [''] * len(row)
 
     st.dataframe(
-        margin_by_category.sort_values("Net_Value", ascending=False),
+        margin_by_category.style
+        .apply(highlight_total_row, axis=1)
+        .format({
+            "Net_Value": "{:,.0f}",
+            "Total_Cost": "{:,.0f}",
+            "Discount_Value": "{:,.0f}",
+            "Discount %": "{:.0f}%",
+            "Rebate_Value": "{:,.0f}",
+            "Rental_Allocated": "{:,.0f}",
+            "Gross Profit": "{:,.0f}",
+            "Margin %": "{:.0f}%",
+            "Effective_Profit": "{:,.0f}",
+            "Effective Margin %": "{:.0f}%",
+            "Return on Cost %": "{:.0f}%"
+        }),
         use_container_width=True,
         hide_index=True
     )
 
     # ============================================================
-    # 🏬 Customer × Category Sales Matrix
+    # Customer × Category Sales Matrix
     # ============================================================
-
     st.markdown("## 🏬 Customer-wise Sales by Category")
 
-    CUSTOMER_COL = "PY Name 1"
-
-    customer_category = (
-        df_val
-        .pivot_table(
-            index=CUSTOMER_COL,
-            columns="Category",
-            values=NET_COL,
-            aggfunc="sum",
-            fill_value=0
+    if CUSTOMER_COL and CUSTOMER_COL in df_val.columns:
+        customer_category = (
+            df_val
+            .pivot_table(
+                index=CUSTOMER_COL,
+                columns="Category",
+                values=NET_COL,
+                aggfunc="sum",
+                fill_value=0
+            )
         )
-    )
 
-    customer_category["Total"] = customer_category.sum(axis=1)
-    customer_category = customer_category.sort_values("Total", ascending=False)
+        customer_category["Total"] = customer_category.sum(axis=1)
+        customer_category = customer_category.sort_values("Total", ascending=False)
 
-    total_row = customer_category.sum().to_frame().T
-    total_row.index = ["TOTAL"]
+        total_row = customer_category.sum().to_frame().T
+        total_row.index = ["TOTAL"]
 
-    customer_category_final = pd.concat([customer_category, total_row])
+        customer_category_final = pd.concat([customer_category, total_row])
 
-    st.dataframe(
-        customer_category_final,
-        use_container_width=True
-    )
+        st.dataframe(
+            customer_category_final.style.format("{:,.0f}"),
+            use_container_width=True
+        )
+    else:
+        st.info("Customer column not found for category matrix.")
 
     # ─── Downloads ─────────────────────────────────────────────────────────
     st.markdown("### ⬇️ Export")
@@ -6556,69 +6990,91 @@ elif choice == "💰 Profit & Margin":
         csv = display_df.to_csv(index=False).encode("utf-8-sig")
         st.download_button("⬇️ CSV", csv, f"profit_margin_{start_date}_to_{end_date}.csv", "text/csv")
     with c2:
-        st.download_button("⬇️ Excel", data=to_excel_bytes(display_df),
-                           file_name=f"profit_margin_{start_date}_to_{end_date}.xlsx")
-        
-        
-
-
-from datetime import date
-
-def build_daily_email_summary(
-    total_target,
-    total_sales,
-    salesman_df,
-    customer_sales
-):
-    today_str = date.today().strftime("%d %b %Y")
-    balance = total_target - total_sales
-
-    subject = f"Daily Sales Summary – {today_str}"
-
-    body = f"""
-📊 OVERALL PERFORMANCE
-Total Target : {total_target:,.0f} KD
-Achieved     : {total_sales:,.0f} KD
-Balance      : {balance:,.0f} KD
-
-👤 SALESMAN PERFORMANCE
---------------------------------------------------
-Salesman        Target      Achieved     Balance
---------------------------------------------------
-"""
-
-    for _, r in salesman_df.iterrows():
-        bal = r["Target"] - r["Achieved"]
-        body += (
-            f"{r['Driver Name EN']:<15}"
-            f"{r['Target']:>12,.0f}"
-            f"{r['Achieved']:>14,.0f}"
-            f"{bal:>14,.0f}\n"
+        st.download_button(
+            "⬇️ Excel",
+            data=to_excel_bytes(display_df, sheet_name="Profit_Margin", index=False),
+            file_name=f"profit_margin_{start_date}_to_{end_date}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+        
+        
+# ================= DAILY EMAIL SUMMARY HELPER =================
+def build_daily_email_summary(total_ka_target, total_sales, salesman_df, customer_sales):
+    import pandas as pd
+    import numpy as np
 
-    body += """
---------------------------------------------------
+    total_ka_target = float(total_ka_target or 0)
+    total_sales = float(total_sales or 0)
 
-🏪 CUSTOMER SALES SUMMARY
---------------------------------------------------
-Customer              Sales (KD)
---------------------------------------------------
-"""
+    achieved_pct = (total_sales / total_ka_target * 100) if total_ka_target > 0 else 0.0
+    balance = total_ka_target - total_sales
 
-    for cust, val in customer_sales.items():
-        body += f"{cust:<22}{val:>12,.0f}\n"
+    # ---------- Salesman summary ----------
+    sm = salesman_df.copy() if isinstance(salesman_df, pd.DataFrame) else pd.DataFrame()
 
-    body += """
---------------------------------------------------
+    if not sm.empty:
+        for col in ["Target", "Achieved", "Balance"]:
+            if col in sm.columns:
+                sm[col] = pd.to_numeric(sm[col], errors="coerce").fillna(0.0)
+
+        if "Target" in sm.columns and "Achieved" in sm.columns:
+            sm["Ach %"] = np.where(sm["Target"] > 0, (sm["Achieved"] / sm["Target"]) * 100, 0.0)
+        else:
+            sm["Ach %"] = 0.0
+
+        sm_top = sm.sort_values("Achieved", ascending=False).head(5)
+
+        top_salesmen_txt = "\n".join([
+            f"- {row.get('Driver Name EN', 'Unknown')}: "
+            f"Achieved KD {float(row.get('Achieved', 0)):,.0f} | "
+            f"Target KD {float(row.get('Target', 0)):,.0f} | "
+            f"Balance KD {float(row.get('Balance', 0)):,.0f} | "
+            f"{float(row.get('Ach %', 0)):.1f}%"
+            for _, row in sm_top.iterrows()
+        ]) if not sm_top.empty else "No salesman data available."
+    else:
+        top_salesmen_txt = "No salesman data available."
+
+    # ---------- Customer summary ----------
+    if isinstance(customer_sales, pd.Series) and not customer_sales.empty:
+        cust_top = customer_sales.sort_values(ascending=False).head(10)
+        top_customers_txt = "\n".join([
+            f"- {str(name)}: KD {float(val):,.0f}"
+            for name, val in cust_top.items()
+        ])
+    else:
+        top_customers_txt = "No customer data available."
+
+    subject = (
+        f"Daily Sales Summary | "
+        f"Sales KD {total_sales:,.0f} / Target KD {total_ka_target:,.0f} "
+        f"({achieved_pct:.1f}%)"
+    )
+
+    body = f"""Dear Team,
+
+Please find below the daily sales summary:
+
+Overall Performance
+- Total KA Target: KD {total_ka_target:,.0f}
+- Total Sales Achieved: KD {total_sales:,.0f}
+- Achievement: {achieved_pct:.1f}%
+- Balance to Target: KD {balance:,.0f}
+
+Top Salesmen
+{top_salesmen_txt}
+
+Top Customers
+{top_customers_txt}
 
 Regards,
-Sales Dashboard
+Management Dashboard
 """
 
     return subject, body
 
 
-if choice == "🧭 Management Command Center":
+elif choice == "🧭 Management Command Center":
 
     st.title("🧭 Management Command Center")
 
@@ -6628,7 +7084,21 @@ if choice == "🧭 Management Command Center":
         st.stop()
 
     df = sales_df.copy()
+
+    # ---------- Required column checks ----------
+    required_cols = ["Billing Date", "Net Value"]
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    if missing_cols:
+        st.error(f"Missing required columns in sales data: {missing_cols}")
+        st.stop()
+
     df["Billing Date"] = pd.to_datetime(df["Billing Date"], errors="coerce")
+    df["Net Value"] = pd.to_numeric(df["Net Value"], errors="coerce").fillna(0.0)
+    df = df.dropna(subset=["Billing Date"])
+
+    if df.empty:
+        st.warning("No valid sales records found after date cleaning.")
+        st.stop()
 
     # ================= DATE & WORKING DAYS =================
     today = pd.to_datetime("today").normalize()
@@ -6636,29 +7106,27 @@ if choice == "🧭 Management Command Center":
     month_end = month_start + pd.offsets.MonthEnd(1)
 
     all_days = pd.date_range(month_start, month_end, freq="D")
-    working_days = all_days[all_days.weekday != 4]  # Exclude Friday only
+    working_days = all_days[all_days.weekday != 4]   # Exclude Friday only
 
-    total_working_days = len(working_days)
+    total_working_days = max(1, len(working_days))
     days_completed = max(1, len(working_days[working_days <= today]))
 
     # ================= TARGET DATA =================
-    if "target_df" in globals() and "KA Target" in target_df.columns:
-        ka_target_map = target_df.set_index("Driver Name EN")["KA Target"]
-    else:
-        ka_target_map = pd.Series(dtype=float)
+    ka_target_map = pd.Series(dtype=float)
+
+    if "target_df" in globals() and isinstance(target_df, pd.DataFrame) and not target_df.empty:
+        if "Driver Name EN" in target_df.columns and "KA Target" in target_df.columns:
+            tdf = target_df.copy()
+            tdf["KA Target"] = pd.to_numeric(tdf["KA Target"], errors="coerce").fillna(0.0)
+            ka_target_map = tdf.groupby("Driver Name EN")["KA Target"].sum()
 
     # ================= OVERALL SALES =================
     total_sales = float(df["Net Value"].sum())
     total_ka_target = float(ka_target_map.sum()) if not ka_target_map.empty else 0.0
 
     # ================= DAILY PACE =================
-    ka_target_per_day = round(
-        total_ka_target / total_working_days, 0
-    ) if total_working_days > 0 else 0
-
-    ka_actual_per_day = round(
-        total_sales / days_completed, 0
-    )
+    ka_target_per_day = round(total_ka_target / total_working_days, 0) if total_working_days > 0 else 0
+    ka_actual_per_day = round(total_sales / days_completed, 0) if days_completed > 0 else 0
 
     def pace_status(actual_day, target_day):
         if target_day <= 0:
@@ -6676,25 +7144,15 @@ if choice == "🧭 Management Command Center":
     # ================= 1️⃣ EXECUTIVE DASHBOARD =================
     st.subheader("1️⃣ Executive RAG Dashboard (Daily Pace)")
 
-    # ─── Get Date Range From Current Data ─────────────────────
-    DATE_COL = "Billing Date"   # change only if column name different
-
-    df_dates = df.copy()
-    df_dates[DATE_COL] = pd.to_datetime(df_dates[DATE_COL], errors="coerce")
-
-    from_dt = df_dates[DATE_COL].min()
-    to_dt   = df_dates[DATE_COL].max()
+    from_dt = df["Billing Date"].min()
+    to_dt = df["Billing Date"].max()
 
     from_txt = from_dt.strftime("%d %b %Y") if pd.notna(from_dt) else "-"
-    to_txt   = to_dt.strftime("%d %b %Y") if pd.notna(to_dt) else "-"
+    to_txt = to_dt.strftime("%d %b %Y") if pd.notna(to_dt) else "-"
 
-    # ─── KPI Columns ───────────────────────────────────────────
     c1, c2, c3, c4, c5 = st.columns(5)
 
-    # ---- Total Sales KPI
     c1.metric("Total Sales", f"KD {total_sales:,.0f}")
-
-    # ---- Date range below KPI (Left = From, Right = To)
     c1.markdown(
         f"""
         <div style="display:flex;justify-content:space-between;
@@ -6706,49 +7164,69 @@ if choice == "🧭 Management Command Center":
         unsafe_allow_html=True
     )
 
-    # ---- Other KPIs
     c2.metric("Total KA Target", f"KD {total_ka_target:,.0f}")
     c3.metric("KA Target / Day", f"KD {ka_target_per_day:,.0f}")
     c4.metric("KA Actual / Day", f"KD {ka_actual_per_day:,.0f}")
     c5.metric("Overall KA Status", overall_ka_status)
+
     # ================= 2️⃣ SALESMAN TABLE =================
     st.subheader("2️⃣ Salesman Performance")
 
-    salesman_df = (
-        df.groupby("Driver Name EN")["Net Value"]
-        .sum()
-        .reset_index(name="Achieved")
-    )
+    if "Driver Name EN" not in df.columns:
+        st.warning("Column 'Driver Name EN' not found in sales data.")
+        salesman_df = pd.DataFrame(columns=["Driver Name EN", "Target", "Achieved", "Balance", "Ach %"])
+    else:
+        salesman_df = (
+            df.groupby("Driver Name EN", dropna=False)["Net Value"]
+            .sum()
+            .reset_index(name="Achieved")
+        )
 
-    salesman_df["Target"] = salesman_df["Driver Name EN"].map(ka_target_map).fillna(0)
-    salesman_df["Balance"] = salesman_df["Target"] - salesman_df["Achieved"]
+        salesman_df["Driver Name EN"] = salesman_df["Driver Name EN"].fillna("Unknown")
+        salesman_df["Target"] = salesman_df["Driver Name EN"].map(ka_target_map).fillna(0.0)
+        salesman_df["Balance"] = salesman_df["Target"] - salesman_df["Achieved"]
+        salesman_df["Ach %"] = np.where(
+            salesman_df["Target"] > 0,
+            (salesman_df["Achieved"] / salesman_df["Target"]) * 100,
+            0.0
+        )
+
+        salesman_df = salesman_df.sort_values("Achieved", ascending=False)
 
     st.dataframe(
-        salesman_df[["Driver Name EN", "Target", "Achieved", "Balance"]],
-        use_container_width=True
+        salesman_df[["Driver Name EN", "Target", "Achieved", "Balance", "Ach %"]].style.format({
+            "Target": "{:,.0f}",
+            "Achieved": "{:,.0f}",
+            "Balance": "{:,.0f}",
+            "Ach %": "{:,.1f}%"
+        }),
+        use_container_width=True,
+        hide_index=True
     )
 
     # ================= 3️⃣ MANAGEMENT INSIGHTS =================
     st.subheader("3️⃣ Action-based Management Insights")
 
-    st.write(
-        "🟢 Overall KA pace ON TRACK"
-        if overall_ka_status == "🟢 GREEN"
-        else "🟠 Overall KA pace NEEDS PUSH"
-        if overall_ka_status == "🟠 AMBER"
-        else "🚨 Overall KA pace CRITICAL"
-    )
+    if overall_ka_status == "🟢 GREEN":
+        st.success("🟢 Overall KA pace ON TRACK")
+    elif overall_ka_status == "🟠 AMBER":
+        st.warning("🟠 Overall KA pace NEEDS PUSH")
+    else:
+        st.error("🚨 Overall KA pace CRITICAL")
 
     # ================= 4️⃣ EMAIL SUMMARY =================
     st.subheader("📧 Daily Email Summary")
 
-    # ---- Customer sales (Top 10) ----
-    customer_sales = (
-        df.groupby("PY Name 1")["Net Value"]
-        .sum()
-        .sort_values(ascending=False)
-        .head(10)
-    )
+    if "PY Name 1" in df.columns:
+        customer_sales = (
+            df.groupby("PY Name 1", dropna=False)["Net Value"]
+            .sum()
+            .sort_values(ascending=False)
+            .head(10)
+        )
+        customer_sales.index = customer_sales.index.fillna("Unknown")
+    else:
+        customer_sales = pd.Series(dtype=float)
 
     subject, body = build_daily_email_summary(
         total_ka_target,
@@ -6785,17 +7263,23 @@ if choice == "🧭 Management Command Center":
         """,
         unsafe_allow_html=True
     )
+# ================= AUDIT LOG INITIALIZE =================
+if "audit_log" not in st.session_state:
+    st.session_state["audit_log"] = []
 
-
-# Admin-only Audit Logs View
+# ================= ADMIN-ONLY AUDIT LOGS VIEW =================
 if user_role == "admin":
     st.sidebar.markdown("---")
     st.sidebar.subheader("Admin Tools")
+
     if st.sidebar.button("View Audit Logs"):
         st.title("📋 Audit Logs")
+
         log_df = pd.DataFrame(st.session_state["audit_log"])
-        st.dataframe(log_df, hide_index=True)
+        st.dataframe(log_df, hide_index=True, use_container_width=True)
+
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
         if st.download_button(
             "⬇️ Download Audit Logs (Excel)",
             data=to_excel_bytes(log_df, sheet_name="Audit_Logs", index=False),
@@ -6808,8 +7292,3 @@ if user_role == "admin":
                 "details": f"audit_logs_{timestamp}.xlsx",
                 "timestamp": datetime.now()
             })
-
-if "audit_log" not in st.session_state:
-    st.session_state["audit_log"] = []
-    
-    
