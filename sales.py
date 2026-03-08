@@ -6998,83 +6998,170 @@ elif choice == "💰 Profit & Margin":
         )
         
         
-# # ================= DAILY EMAIL SUMMARY HELPER =================
-# def build_daily_email_summary(total_ka_target, total_sales, salesman_df, customer_sales):
-#     import pandas as pd
-#     import numpy as np
+# ================= DAILY EMAIL SUMMARY HELPER =================
+def build_daily_email_summary(
+    total_ka_target,
+    total_sales,
+    salesman_df,
+    customer_sales,
+    retail_sales=0.0,
+    ecom_sales=0.0,
+    days_completed=1,
+    total_working_days=1,
+    two_week_not_visited_df=None
+):
+    import pandas as pd
+    import numpy as np
 
-#     total_ka_target = float(total_ka_target or 0)
-#     total_sales = float(total_sales or 0)
+    total_ka_target = float(total_ka_target or 0)
+    total_sales = float(total_sales or 0)
+    retail_sales = float(retail_sales or 0)
+    ecom_sales = float(ecom_sales or 0)
+    days_completed = max(1, int(days_completed or 1))
+    total_working_days = max(1, int(total_working_days or 1))
 
-#     achieved_pct = (total_sales / total_ka_target * 100) if total_ka_target > 0 else 0.0
-#     balance = total_ka_target - total_sales
+    achieved_pct = (total_sales / total_ka_target * 100) if total_ka_target > 0 else 0.0
+    balance = total_ka_target - total_sales
+    remaining_days = max(0, total_working_days - days_completed)
+    required_daily_sales = (balance / remaining_days) if remaining_days > 0 else 0.0
 
-#     # ---------- Salesman summary ----------
-#     sm = salesman_df.copy() if isinstance(salesman_df, pd.DataFrame) else pd.DataFrame()
+    retail_mix_pct = (retail_sales / total_sales * 100) if total_sales > 0 else 0.0
+    ecom_mix_pct = (ecom_sales / total_sales * 100) if total_sales > 0 else 0.0
 
-#     if not sm.empty:
-#         for col in ["Target", "Achieved", "Balance"]:
-#             if col in sm.columns:
-#                 sm[col] = pd.to_numeric(sm[col], errors="coerce").fillna(0.0)
+    daily_target = (total_ka_target / total_working_days) if total_working_days > 0 else 0.0
+    actual_daily = (total_sales / days_completed) if days_completed > 0 else 0.0
 
-#         if "Target" in sm.columns and "Achieved" in sm.columns:
-#             sm["Ach %"] = np.where(sm["Target"] > 0, (sm["Achieved"] / sm["Target"]) * 100, 0.0)
-#         else:
-#             sm["Ach %"] = 0.0
+    # ---------- Salesman summary ----------
+    sm = salesman_df.copy() if isinstance(salesman_df, pd.DataFrame) else pd.DataFrame()
 
-#         sm_top = sm.sort_values("Achieved", ascending=False).head(5)
+    if not sm.empty:
+        for col in ["Target", "Achieved", "Balance"]:
+            if col in sm.columns:
+                sm[col] = pd.to_numeric(sm[col], errors="coerce").fillna(0.0)
 
-#         top_salesmen_txt = "\n".join([
-#             f"- {row.get('Driver Name EN', 'Unknown')}: "
-#             f"Achieved KD {float(row.get('Achieved', 0)):,.0f} | "
-#             f"Target KD {float(row.get('Target', 0)):,.0f} | "
-#             f"Balance KD {float(row.get('Balance', 0)):,.0f} | "
-#             f"{float(row.get('Ach %', 0)):.1f}%"
-#             for _, row in sm_top.iterrows()
-#         ]) if not sm_top.empty else "No salesman data available."
-#     else:
-#         top_salesmen_txt = "No salesman data available."
+        if "Target" in sm.columns and "Achieved" in sm.columns:
+            sm["Ach %"] = np.where(sm["Target"] > 0, (sm["Achieved"] / sm["Target"]) * 100, 0.0)
+        else:
+            sm["Ach %"] = 0.0
 
-#     # ---------- Customer summary ----------
-#     if isinstance(customer_sales, pd.Series) and not customer_sales.empty:
-#         cust_top = customer_sales.sort_values(ascending=False).head(10)
-#         top_customers_txt = "\n".join([
-#             f"- {str(name)}: KD {float(val):,.0f}"
-#             for name, val in cust_top.items()
-#         ])
-#     else:
-#         top_customers_txt = "No customer data available."
+        if "Driver Name EN" not in sm.columns:
+            sm["Driver Name EN"] = "Unknown"
 
-#     subject = (
-#         f"Daily Sales Summary | "
-#         f"Sales KD {total_sales:,.0f} / Target KD {total_ka_target:,.0f} "
-#         f"({achieved_pct:.1f}%)"
-#     )
+        sm_top = sm.sort_values("Achieved", ascending=False).head(3)
+        sm_risk = sm.sort_values("Ach %", ascending=True).head(3)
 
-#     body = f"""Dear Team,
+        top_salesmen_txt = "\n".join([
+            f"- {row.get('Driver Name EN', 'Unknown')}: KD {float(row.get('Achieved', 0)):,.0f} ({float(row.get('Ach %', 0)):.1f}%)"
+            for _, row in sm_top.iterrows()
+        ]) if not sm_top.empty else "No salesman data available."
 
-# Please find below the daily sales summary:
+        risk_salesmen_txt = "\n".join([
+            f"- {row.get('Driver Name EN', 'Unknown')}: KD {float(row.get('Achieved', 0)):,.0f} ({float(row.get('Ach %', 0)):.1f}%)"
+            for _, row in sm_risk.iterrows()
+        ]) if not sm_risk.empty else "No underperformers identified."
+    else:
+        top_salesmen_txt = "No salesman data available."
+        risk_salesmen_txt = "No underperformers identified."
 
-# Overall Performance
-# - Total KA Target: KD {total_ka_target:,.0f}
-# - Total Sales Achieved: KD {total_sales:,.0f}
-# - Achievement: {achieved_pct:.1f}%
-# - Balance to Target: KD {balance:,.0f}
+    # ---------- Customer summary ----------
+    if isinstance(customer_sales, pd.Series) and not customer_sales.empty:
+        cust_top = customer_sales.sort_values(ascending=False).head(5)
+        top_customers_txt = "\n".join([
+            f"- {str(name)}: KD {float(val):,.0f}"
+            for name, val in cust_top.items()
+        ])
+        top_customer_name = str(cust_top.index[0])
+    else:
+        top_customers_txt = "No customer data available."
+        top_customer_name = "N/A"
 
-# Top Salesmen
-# {top_salesmen_txt}
+    # ---------- Two-week not visited ----------
+    nv = two_week_not_visited_df.copy() if isinstance(two_week_not_visited_df, pd.DataFrame) else pd.DataFrame()
+    if not nv.empty:
+        nv = nv.head(10).copy()
+        not_visited_txt = "\n".join([
+            f"- {row.get('Customer', 'Unknown')}: last visit {row.get('Last Visit Text', '-')}, {int(row.get('Days Since Visit', 0))} days ago"
+            for _, row in nv.iterrows()
+        ])
+    else:
+        not_visited_txt = "No customers pending visit for more than 2 weeks."
 
-# Top Customers
-# {top_customers_txt}
+    # ---------- AI Insight ----------
+    ai_lines = []
 
-# Regards,
-# Management Dashboard
-# """
+    if actual_daily >= daily_target:
+        ai_lines.append("Sales pace is above required daily target.")
+    else:
+        ai_lines.append("Sales pace is below required daily target and needs push.")
 
-#     return subject, body
+    if top_customer_name != "N/A":
+        ai_lines.append(f"Top revenue driver is {top_customer_name}.")
+
+    if balance > 0 and remaining_days > 0:
+        ai_lines.append(f"Required daily sales for the rest of the month: KD {required_daily_sales:,.0f}.")
+    elif balance <= 0:
+        ai_lines.append("Target already achieved for the month.")
+
+    if not nv.empty:
+        ai_lines.append(f"{len(nv)} customers have not been visited for more than 2 weeks and need follow-up.")
+
+    ai_insight_txt = "\n".join([f"- {x}" for x in ai_lines])
+
+    subject = (
+        f"Daily Sales Summary | "
+        f"Sales KD {total_sales:,.0f} / Target KD {total_ka_target:,.0f} "
+        f"({achieved_pct:.1f}%)"
+    )
+
+    body = f"""Dear Team,
+
+Executive Summary
+-----------------
+MTD Sales: KD {total_sales:,.0f}
+KA Target: KD {total_ka_target:,.0f}
+Achievement: {achieved_pct:.1f}%
+Balance to Target: KD {balance:,.0f}
+
+Target Gap Calculation
+----------------------
+Remaining Target: KD {balance:,.0f}
+Days Completed: {days_completed}
+Remaining Working Days: {remaining_days}
+Required Daily Sales: KD {required_daily_sales:,.0f}
+
+Retail vs E-Com Mix
+-------------------
+Retail Sales: KD {retail_sales:,.0f} ({retail_mix_pct:.1f}%)
+E-Commerce Sales: KD {ecom_sales:,.0f} ({ecom_mix_pct:.1f}%)
+
+Top Salesmen
+------------
+{top_salesmen_txt}
+
+Attention Required
+------------------
+{risk_salesmen_txt}
+
+Top Customers
+-------------
+{top_customers_txt}
+
+Two Weeks Not Visited Customers
+-------------------------------
+{not_visited_txt}
+
+AI Insights
+-----------
+{ai_insight_txt}
+
+Regards,
+Management Dashboard
+"""
+
+    return subject, body
 
 
-elif choice == "🧭 Management Command Center":
+if choice == "🧭 Management Command Center":
 
     st.title("🧭 Management Command Center")
 
@@ -7085,7 +7172,6 @@ elif choice == "🧭 Management Command Center":
 
     df = sales_df.copy()
 
-    # ---------- Required column checks ----------
     required_cols = ["Billing Date", "Net Value"]
     missing_cols = [c for c in required_cols if c not in df.columns]
     if missing_cols:
@@ -7100,8 +7186,14 @@ elif choice == "🧭 Management Command Center":
         st.warning("No valid sales records found after date cleaning.")
         st.stop()
 
-    # ================= DATE & WORKING DAYS =================
-    today = pd.to_datetime("today").normalize()
+    # ================= USE LATEST AVAILABLE MONTH =================
+    latest_data_date = df["Billing Date"].max()
+
+    if pd.isna(latest_data_date):
+        st.warning("No valid Billing Date found in sales data.")
+        st.stop()
+
+    today = pd.to_datetime(latest_data_date).normalize()
     month_start = today.replace(day=1)
     month_end = month_start + pd.offsets.MonthEnd(1)
 
@@ -7110,6 +7202,15 @@ elif choice == "🧭 Management Command Center":
 
     total_working_days = max(1, len(working_days))
     days_completed = max(1, len(working_days[working_days <= today]))
+
+    # ================= FILTER LATEST AVAILABLE MONTH =================
+    df_mtd = df[(df["Billing Date"] >= month_start) & (df["Billing Date"] <= today)].copy()
+
+    if df_mtd.empty:
+        st.warning("No sales data found for latest available month.")
+        st.stop()
+
+    st.caption(f"Showing latest available data month: {today.strftime('%B %Y')}")
 
     # ================= TARGET DATA =================
     ka_target_map = pd.Series(dtype=float)
@@ -7121,7 +7222,7 @@ elif choice == "🧭 Management Command Center":
             ka_target_map = tdf.groupby("Driver Name EN")["KA Target"].sum()
 
     # ================= OVERALL SALES =================
-    total_sales = float(df["Net Value"].sum())
+    total_sales = float(df_mtd["Net Value"].sum())
     total_ka_target = float(ka_target_map.sum()) if not ka_target_map.empty else 0.0
 
     # ================= DAILY PACE =================
@@ -7141,11 +7242,11 @@ elif choice == "🧭 Management Command Center":
 
     overall_ka_status = pace_status(ka_actual_per_day, ka_target_per_day)
 
-    # ================= 1️⃣ EXECUTIVE DASHBOARD =================
-    st.subheader("1️⃣ Executive RAG Dashboard (Daily Pace)")
+    # ================= EXECUTIVE KPI DASHBOARD =================
+    st.subheader("1️⃣ Executive RAG Dashboard")
 
-    from_dt = df["Billing Date"].min()
-    to_dt = df["Billing Date"].max()
+    from_dt = df_mtd["Billing Date"].min()
+    to_dt = df_mtd["Billing Date"].max()
 
     from_txt = from_dt.strftime("%d %b %Y") if pd.notna(from_dt) else "-"
     to_txt = to_dt.strftime("%d %b %Y") if pd.notna(to_dt) else "-"
@@ -7163,25 +7264,23 @@ elif choice == "🧭 Management Command Center":
         """,
         unsafe_allow_html=True
     )
-
     c2.metric("Total KA Target", f"KD {total_ka_target:,.0f}")
     c3.metric("KA Target / Day", f"KD {ka_target_per_day:,.0f}")
     c4.metric("KA Actual / Day", f"KD {ka_actual_per_day:,.0f}")
     c5.metric("Overall KA Status", overall_ka_status)
 
-    # ================= 2️⃣ SALESMAN TABLE =================
+    # ================= SALESMAN PERFORMANCE =================
     st.subheader("2️⃣ Salesman Performance")
 
-    if "Driver Name EN" not in df.columns:
+    if "Driver Name EN" not in df_mtd.columns:
         st.warning("Column 'Driver Name EN' not found in sales data.")
         salesman_df = pd.DataFrame(columns=["Driver Name EN", "Target", "Achieved", "Balance", "Ach %"])
     else:
         salesman_df = (
-            df.groupby("Driver Name EN", dropna=False)["Net Value"]
+            df_mtd.groupby("Driver Name EN", dropna=False)["Net Value"]
             .sum()
             .reset_index(name="Achieved")
         )
-
         salesman_df["Driver Name EN"] = salesman_df["Driver Name EN"].fillna("Unknown")
         salesman_df["Target"] = salesman_df["Driver Name EN"].map(ka_target_map).fillna(0.0)
         salesman_df["Balance"] = salesman_df["Target"] - salesman_df["Achieved"]
@@ -7190,7 +7289,6 @@ elif choice == "🧭 Management Command Center":
             (salesman_df["Achieved"] / salesman_df["Target"]) * 100,
             0.0
         )
-
         salesman_df = salesman_df.sort_values("Achieved", ascending=False)
 
     st.dataframe(
@@ -7204,8 +7302,160 @@ elif choice == "🧭 Management Command Center":
         hide_index=True
     )
 
-    # ================= 3️⃣ MANAGEMENT INSIGHTS =================
-    st.subheader("3️⃣ Action-based Management Insights")
+    # ================= TOP SALESMEN =================
+    st.subheader("3️⃣ Top Salesmen")
+
+    top_salesmen_df = salesman_df.sort_values("Achieved", ascending=False).head(5).copy()
+
+    st.dataframe(
+        top_salesmen_df[["Driver Name EN", "Target", "Achieved", "Balance", "Ach %"]].style.format({
+            "Target": "{:,.0f}",
+            "Achieved": "{:,.0f}",
+            "Balance": "{:,.0f}",
+            "Ach %": "{:,.1f}%"
+        }),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # ================= TOP CUSTOMERS =================
+    st.subheader("4️⃣ Top Customers")
+
+    if "PY Name 1" in df_mtd.columns:
+        customer_sales_df = (
+            df_mtd.groupby("PY Name 1", dropna=False)["Net Value"]
+            .sum()
+            .reset_index(name="Sales")
+            .sort_values("Sales", ascending=False)
+            .head(10)
+        )
+        customer_sales_df["PY Name 1"] = customer_sales_df["PY Name 1"].fillna("Unknown")
+    else:
+        customer_sales_df = pd.DataFrame(columns=["PY Name 1", "Sales"])
+
+    st.dataframe(
+        customer_sales_df.style.format({"Sales": "{:,.0f}"}),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # ================= TARGET GAP CALCULATION =================
+    balance_to_target = total_ka_target - total_sales
+    remaining_days = max(0, total_working_days - days_completed)
+    required_daily_sales = (balance_to_target / remaining_days) if remaining_days > 0 else balance_to_target
+
+    st.subheader("5️⃣ Target Gap Calculation")
+    g1, g2, g3 = st.columns(3)
+    g1.metric("Remaining Target", f"KD {balance_to_target:,.0f}")
+    g2.metric("Remaining Working Days", f"{remaining_days}")
+    g3.metric("Required Daily Sales", f"KD {required_daily_sales:,.0f}")
+
+        # ================= RETAIL VS E-COM MIX (USE APP LOGIC) =================
+    def _normalize_channel(x):
+        s = str(x).strip().lower()
+        if s in ("", "nan", "none", "market"):
+            return "retail"
+        if any(k in s for k in ["e-com", "ecom", "ecommerce", "online", "talabat"]):
+            return "e-com"
+        return "retail"
+
+    retail_sales = 0.0
+    ecom_sales = 0.0
+
+    if "channels_df" in globals() and isinstance(channels_df, pd.DataFrame) and not channels_df.empty:
+        if {"PY Name 1", "Channels"}.issubset(channels_df.columns) and "PY Name 1" in df_mtd.columns:
+            ch_map = channels_df[["PY Name 1", "Channels"]].copy()
+            ch_map["PY Name 1"] = ch_map["PY Name 1"].astype(str).str.strip()
+            ch_map["Channels"] = ch_map["Channels"].apply(_normalize_channel)
+
+            tx = df_mtd.copy()
+            tx["PY Name 1"] = tx["PY Name 1"].astype(str).str.strip()
+
+            tx = tx.merge(ch_map, on="PY Name 1", how="left")
+            tx["Channels"] = tx["Channels"].fillna("retail")
+            tx["Ch2"] = np.where(tx["Channels"] == "e-com", "E-com", "Retail")
+
+            retail_sales = float(tx.loc[tx["Ch2"] == "Retail", "Net Value"].sum())
+            ecom_sales = float(tx.loc[tx["Ch2"] == "E-com", "Net Value"].sum())
+        else:
+            retail_sales = total_sales
+            ecom_sales = 0.0
+    else:
+        retail_sales = total_sales
+        ecom_sales = 0.0
+
+    retail_mix_pct = (retail_sales / total_sales * 100) if total_sales > 0 else 0.0
+    ecom_mix_pct = (ecom_sales / total_sales * 100) if total_sales > 0 else 0.0
+
+    st.subheader("6️⃣ Retail vs E-Com Mix")
+    m1, m2 = st.columns(2)
+    m1.metric("Retail Sales", f"KD {retail_sales:,.0f}", f"{retail_mix_pct:.1f}%")
+    m2.metric("E-Commerce Sales", f"KD {ecom_sales:,.0f}", f"{ecom_mix_pct:.1f}%")
+
+    # ================= PROFIT MARGIN ALERT =================
+    gross_profit = 0.0
+    gross_margin_pct = 0.0
+
+    qty_col = None
+    for qc in ["Qty", "Billed Qty", "Sales Qty", "Quantity"]:
+        if qc in df_mtd.columns:
+            qty_col = qc
+            break
+
+    if all(col in df_mtd.columns for col in ["Cost Price", "Net Value"]) and qty_col is not None:
+        pm = df_mtd.copy()
+        pm["Cost Price"] = pd.to_numeric(pm["Cost Price"], errors="coerce").fillna(0.0)
+        pm[qty_col] = pd.to_numeric(pm[qty_col], errors="coerce").fillna(0.0)
+        pm["Net Value"] = pd.to_numeric(pm["Net Value"], errors="coerce").fillna(0.0)
+
+        pm["Cost Value"] = pm["Cost Price"] * pm[qty_col]
+        gross_profit = float((pm["Net Value"] - pm["Cost Value"]).sum())
+        gross_margin_pct = (gross_profit / total_sales * 100) if total_sales > 0 else 0.0
+
+    if gross_margin_pct >= 18:
+        margin_alert = "🟢 Healthy"
+    elif gross_margin_pct >= 12:
+        margin_alert = "🟠 Watch"
+    else:
+        margin_alert = "🔴 Low Margin"
+
+    st.subheader("7️⃣ Profit Margin Alert")
+    p1, p2, p3 = st.columns(3)
+    p1.metric("Gross Profit", f"KD {gross_profit:,.0f}")
+    p2.metric("Gross Margin %", f"{gross_margin_pct:.1f}%")
+    p3.metric("Margin Alert", margin_alert)
+
+    # ================= AI INSIGHTS =================
+    st.subheader("8️⃣ AI Insights")
+
+    ai_points = []
+
+    if ka_actual_per_day >= ka_target_per_day:
+        ai_points.append("Sales pace is above required daily target.")
+    else:
+        ai_points.append("Sales pace is below required daily target and needs push.")
+
+    if not top_salesmen_df.empty:
+        ai_points.append(f"Top salesman: {top_salesmen_df.iloc[0]['Driver Name EN']}.")
+
+    if not customer_sales_df.empty:
+        ai_points.append(f"Top customer: {customer_sales_df.iloc[0]['PY Name 1']}.")
+
+    if gross_margin_pct < 12:
+        ai_points.append("Profitability is weak and low-margin business should be reviewed.")
+    elif gross_margin_pct < 18:
+        ai_points.append("Profit margin is moderate; tighter discount control is recommended.")
+    else:
+        ai_points.append("Profit margin is healthy.")
+
+    if balance_to_target > 0 and remaining_days > 0:
+        ai_points.append(f"Need KD {required_daily_sales:,.0f} per day to close the target gap.")
+
+    for point in ai_points:
+        st.write(f"- {point}")
+
+    # ================= MANAGEMENT STATUS =================
+    st.subheader("9️⃣ Action-based Management Insights")
 
     if overall_ka_status == "🟢 GREEN":
         st.success("🟢 Overall KA pace ON TRACK")
@@ -7213,34 +7463,89 @@ elif choice == "🧭 Management Command Center":
         st.warning("🟠 Overall KA pace NEEDS PUSH")
     else:
         st.error("🚨 Overall KA pace CRITICAL")
+        
+        # ================= TWO WEEKS NOT VISITED CUSTOMERS =================
+    two_week_not_visited_df = pd.DataFrame(columns=["Customer", "Last Visit", "Last Visit Text", "Days Since Visit", "Sales"])
 
-    # ================= 4️⃣ EMAIL SUMMARY =================
+    if "PY Name 1" in df.columns and "Billing Date" in df.columns:
+        visit_base = df.copy()
+        visit_base["PY Name 1"] = visit_base["PY Name 1"].astype(str).str.strip()
+        visit_base["Billing Date"] = pd.to_datetime(visit_base["Billing Date"], errors="coerce")
+        visit_base["Net Value"] = pd.to_numeric(visit_base["Net Value"], errors="coerce").fillna(0.0)
+        visit_base = visit_base.dropna(subset=["Billing Date"])
+
+        if not visit_base.empty:
+            latest_visit_ref = visit_base["Billing Date"].max()
+
+            last_visit_df = (
+                visit_base.groupby("PY Name 1", dropna=False)
+                .agg(
+                    Last_Visit=("Billing Date", "max"),
+                    Sales=("Net Value", "sum")
+                )
+                .reset_index()
+                .rename(columns={"PY Name 1": "Customer"})
+            )
+
+            last_visit_df["Days Since Visit"] = (
+                latest_visit_ref - last_visit_df["Last_Visit"]
+            ).dt.days
+
+            two_week_not_visited_df = (
+                last_visit_df[last_visit_df["Days Since Visit"] > 14]
+                .sort_values(["Days Since Visit", "Sales"], ascending=[False, False])
+                .copy()
+            )
+
+            two_week_not_visited_df["Last Visit Text"] = two_week_not_visited_df["Last_Visit"].dt.strftime("%d-%b-%Y")
+
+    st.subheader("8️⃣ Two Weeks Not Visited Customers")
+
+    if not two_week_not_visited_df.empty:
+        st.dataframe(
+            two_week_not_visited_df[["Customer", "Last Visit Text", "Days Since Visit", "Sales"]]
+            .rename(columns={"Last Visit Text": "Last Visit"})
+            .style.format({"Sales": "{:,.0f}"}),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("No customers found with more than 14 days since last visit.")    
+
+    # ================= EMAIL SUMMARY =================
     st.subheader("📧 Daily Email Summary")
 
-    if "PY Name 1" in df.columns:
+    # ---- Customer Sales ----
+    if "PY Name 1" in df_mtd.columns:
         customer_sales = (
-            df.groupby("PY Name 1", dropna=False)["Net Value"]
+            df_mtd.groupby("PY Name 1")["Net Value"]
             .sum()
             .sort_values(ascending=False)
-            .head(10)
         )
-        customer_sales.index = customer_sales.index.fillna("Unknown")
     else:
         customer_sales = pd.Series(dtype=float)
 
+    # ---- Generate Email ----
     subject, body = build_daily_email_summary(
-        total_ka_target,
-        total_sales,
-        salesman_df,
-        customer_sales
+        total_ka_target=total_ka_target,
+        total_sales=total_sales,
+        salesman_df=salesman_df,
+        customer_sales=customer_sales,
+        retail_sales=retail_sales,
+        ecom_sales=ecom_sales,
+        days_completed=days_completed,
+        total_working_days=total_working_days,
+        two_week_not_visited_df=two_week_not_visited_df
     )
 
+    # ---- Email Preview ----
     st.text_area(
         "📄 Email Preview",
         value=f"Subject: {subject}\n\n{body}",
         height=420
     )
 
+    # ---- Mail Button ----
     mailto_link = (
         f"mailto:?subject={urllib.parse.quote(subject)}"
         f"&body={urllib.parse.quote(body)}"
@@ -7263,6 +7568,7 @@ elif choice == "🧭 Management Command Center":
         """,
         unsafe_allow_html=True
     )
+
 # ================= AUDIT LOG INITIALIZE =================
 if "audit_log" not in st.session_state:
     st.session_state["audit_log"] = []
