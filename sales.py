@@ -2329,122 +2329,116 @@ elif choice == texts[lang]["sales_tracking"]:
                                 "details": "Talabat MTD Details (Excel)",
                                 "timestamp": datetime.now()
                             })
+                            
+                            
+                        # ================================ 
+                        # 📊 CHARTS TAB 
+                        # ================================    
+                        with tabs[2]:
 
-                    # ================================
-                    # 📊 CHARTS TAB (GM Premium Visuals)
-                    # ================================
-                    # ================================
-                    # 📊 CHARTS TAB (D: Data-heavy Analytical Command Center) - UPDATED (Retail rename + MTD/Forecast fix)
-                    # ================================
-                    with tabs[2]:
+                            from calendar import monthrange
 
-                        from calendar import monthrange
+                            st.subheader("📈 Sales Trends & Channel Performance – Management Command Center")
+                            st.caption("Analytical view: Toggle period • Forecast • Run-rate • Channel • Salesman • Drivers")
 
-                        st.subheader("📈 Sales Trends & Channel Performance – Management Command Center")
-                        st.caption("Analytical view: Toggle period • Forecast • Run-rate • Channel • Salesman • Drivers")
+                            if df_filtered is None or df_filtered.empty:
+                                st.info("No data available for charts.")
+                                st.stop()
 
-                        if df_filtered is None or df_filtered.empty:
-                            st.info("No data available for charts.")
-                            st.stop()
+                            if "Billing Date" not in df_filtered.columns:
+                                st.error("⚠️ 'Billing Date' column not found!")
+                                st.stop()
 
-                        if "Billing Date" not in df_filtered.columns:
-                            st.error("⚠️ 'Billing Date' column not found!")
-                            st.stop()
+                            df = df_filtered.copy()
+                            df["Billing Date"] = pd.to_datetime(df["Billing Date"], errors="coerce").dt.normalize()
+                            df["Net Value"] = pd.to_numeric(df.get("Net Value", 0), errors="coerce").fillna(0.0)
+                            df = df.dropna(subset=["Billing Date"])
 
-                        df = df_filtered.copy()
+                            if df.empty:
+                                st.info("No valid Billing Date rows to plot.")
+                                st.stop()
 
-                        # ✅ Normalize dates (prevents month filter issues)
-                        df["Billing Date"] = pd.to_datetime(df["Billing Date"], errors="coerce").dt.normalize()
-                        df["Net Value"] = pd.to_numeric(df.get("Net Value", 0), errors="coerce").fillna(0.0)
-                        df = df.dropna(subset=["Billing Date"])
+                            # ---------------------------------------------------
+                            # 0️⃣ Period Toggle
+                            # ---------------------------------------------------
+                            gran = st.radio("View", ["Daily", "Weekly", "Monthly"], horizontal=True, index=0)
+                            freq_map = {"Daily": "D", "Weekly": "W-MON", "Monthly": "MS"}
+                            freq = freq_map[gran]
 
-                        if df.empty:
-                            st.info("No valid Billing Date rows to plot.")
-                            st.stop()
+                            # ---------------------------------------------------
+                            # 1️⃣ Forecast / run rate
+                            # ---------------------------------------------------
+                            as_of = df["Billing Date"].max()
+                            cm, cy = int(as_of.month), int(as_of.year)
+                            total_days_month = monthrange(cy, cm)[1]
 
-                        # ---------------------------------------------------
-                        # 0️⃣ Period Toggle (Daily/Weekly/Monthly)
-                        # ---------------------------------------------------
-                        gran = st.radio("View", ["Daily", "Weekly", "Monthly"], horizontal=True, index=0)
-                        freq_map = {"Daily": "D", "Weekly": "W-MON", "Monthly": "MS"}
-                        freq = freq_map[gran]
+                            month_start = as_of.replace(day=1)
+                            df_cm = df[(df["Billing Date"] >= month_start) & (df["Billing Date"] <= as_of)]
 
-                        # ---------------------------------------------------
-                        # 1️⃣ Month-end forecast + run-rate (✅ USE LATEST DATE IN DATA, NOT SYSTEM TODAY)
-                        # ---------------------------------------------------
-                        as_of = df["Billing Date"].max()          # ✅ latest date from filtered data
-                        cm, cy = int(as_of.month), int(as_of.year)
-                        total_days_month = monthrange(cy, cm)[1]
+                            mtd_sales = float(df_cm["Net Value"].sum())
+                            days_passed = int(df_cm["Billing Date"].dt.date.nunique())
+                            remaining_days = max(total_days_month - days_passed, 0)
 
-                        month_start = as_of.replace(day=1)        # ✅ month start for the as_of month
-                        df_cm = df[(df["Billing Date"] >= month_start) & (df["Billing Date"] <= as_of)]
+                            avg_per_day = (mtd_sales / days_passed) if days_passed > 0 else 0.0
+                            month_end_forecast = mtd_sales + (avg_per_day * remaining_days)
 
-                        mtd_sales = float(df_cm["Net Value"].sum())
-                        days_passed = int(df_cm["Billing Date"].dt.date.nunique())
-                        remaining_days = max(total_days_month - days_passed, 0)
+                            per_day_target = float(per_day_ka_target) if "per_day_ka_target" in locals() or "per_day_ka_target" in globals() else 0.0
+                            monthly_target = per_day_target * total_days_month
+                            remaining_target = monthly_target - mtd_sales
+                            required_run_rate = (remaining_target / remaining_days) if remaining_days > 0 else 0.0
+                            achievement_mtd = (mtd_sales / monthly_target * 100) if monthly_target > 0 else 0.0
 
-                        avg_per_day = (mtd_sales / days_passed) if days_passed > 0 else 0.0
-                        month_end_forecast = mtd_sales + (avg_per_day * remaining_days)
+                            # ---------------------------------------------------
+                            # 2️⃣ Channel totals
+                            # ---------------------------------------------------
+                            df_channel_temp = df.groupby("PY Name 1")["Net Value"].sum().reset_index()
 
-                        per_day_target = float(per_day_ka_target) if "per_day_ka_target" in globals() else 0.0
-                        monthly_target = per_day_target * total_days_month
-                        remaining_target = monthly_target - mtd_sales
-                        required_run_rate = (remaining_target / remaining_days) if remaining_days > 0 else 0.0
+                            df_ch_merge = df_channel_temp.merge(
+                                channels_df[["PY Name 1", "Channels"]],
+                                on="PY Name 1",
+                                how="left"
+                            )
 
-                        achievement_mtd = (mtd_sales / monthly_target * 100) if monthly_target > 0 else 0.0
+                            df_ch_merge["Channels"] = (
+                                df_ch_merge["Channels"]
+                                .astype(str).str.strip().str.lower()
+                                .replace({"": "retail", "nan": "retail", "none": "retail", "market": "retail"})
+                            )
 
-                        # ---------------------------------------------------
-                        # 2️⃣ Channel totals (Retail vs E-com)  ✅ rename Market -> Retail
-                        # ---------------------------------------------------
-                        df_channel_temp = df.groupby("PY Name 1")["Net Value"].sum().reset_index()
+                            total_ecom = float(df_ch_merge.loc[df_ch_merge["Channels"] == "e-com", "Net Value"].sum())
+                            total_retail = float(df_ch_merge.loc[df_ch_merge["Channels"] != "e-com", "Net Value"].sum())
+                            total_all = total_retail + total_ecom
 
-                        df_ch_merge = df_channel_temp.merge(
-                            channels_df[["PY Name 1", "Channels"]],
-                            on="PY Name 1",
-                            how="left"
-                        )
+                            ecom_share = (total_ecom / total_all * 100) if total_all > 0 else 0.0
+                            retail_share = (total_retail / total_all * 100) if total_all > 0 else 0.0
 
-                        df_ch_merge["Channels"] = (
-                            df_ch_merge["Channels"]
-                            .astype(str).str.strip().str.lower()
-                            .replace({"": "retail", "nan": "retail", "none": "retail", "market": "retail"})
-                        )
+                            # ---------------------------------------------------
+                            # 3️⃣ KPI Strip
+                            # ---------------------------------------------------
+                            active_days = int(df["Billing Date"].dt.date.nunique())
 
-                        total_ecom = float(df_ch_merge.loc[df_ch_merge["Channels"] == "e-com", "Net Value"].sum())
-                        total_retail = float(df_ch_merge.loc[df_ch_merge["Channels"] != "e-com", "Net Value"].sum())
-                        total_all = total_retail + total_ecom
+                            k1, k2, k3, k4, k5, k6 = st.columns(6)
+                            k1.metric("Total Sales", f"KD {total_all:,.0f}")
+                            k2.metric("Retail", f"KD {total_retail:,.0f}", f"{retail_share:.1f}%")
+                            k3.metric("E-com", f"KD {total_ecom:,.0f}", f"{ecom_share:.1f}%")
+                            k4.metric("MTD Sales", f"KD {mtd_sales:,.0f}", f"{achievement_mtd:.1f}%")
+                            k5.metric("Month-End Forecast", f"KD {month_end_forecast:,.0f}")
+                            k6.metric("Required / Day", f"KD {required_run_rate:,.0f}")
 
-                        ecom_share = (total_ecom / total_all * 100) if total_all > 0 else 0.0
-                        retail_share = (total_retail / total_all * 100) if total_all > 0 else 0.0
+                            st.caption(f"📅 As-of Date (from data): {as_of.date()} | Active Days in Filter: {active_days:,}")
+                            st.markdown("---")
 
-                        # ---------------------------------------------------
-                        # 3️⃣ KPI Strip (data-heavy)
-                        # ---------------------------------------------------
-                        active_days = int(df["Billing Date"].dt.date.nunique())
+                            # ---------------------------------------------------
+                            # 4️⃣ Trend + Summary Table
+                            # ---------------------------------------------------
+                            trend_col, summary_col = st.columns([0.68, 0.32], gap="large")
 
-                        k1, k2, k3, k4, k5, k6 = st.columns(6)
-                        k1.metric("Total Sales", f"KD {total_all:,.0f}")
-                        k2.metric("Retail", f"KD {total_retail:,.0f}", f"{retail_share:.1f}%")
-                        k3.metric("E-com", f"KD {total_ecom:,.0f}", f"{ecom_share:.1f}%")
-                        k4.metric("MTD Sales", f"KD {mtd_sales:,.0f}", f"{achievement_mtd:.1f}% of M target")
-                        k5.metric("Month-End Forecast", f"KD {month_end_forecast:,.0f}")
-                        k6.metric("Required / Day", f"KD {required_run_rate:,.0f}")
-
-                        st.caption(f"📅 As-of Date (from data): {as_of.date()} | Active Days in Filter: {active_days:,}")
-                        st.markdown("---")
-
-                        # ---------------------------------------------------
-                        # 4️⃣ Period Trend (Actual vs Target) + Forecast line
-                        # ---------------------------------------------------
-                        c1, c2 = st.columns([0.62, 0.38], gap="large")
-
-                        with c1:
-                            st.markdown(f"### 📌 {gran} Trend (Actual vs Target) + Month-End Forecast")
-
-                            df_period = (df.groupby(pd.Grouper(key="Billing Date", freq=freq))["Net Value"]
-                                        .sum()
-                                        .reset_index()
-                                        .rename(columns={"Billing Date": "Period", "Net Value": "Sales"}))
+                            df_period = (
+                                df.groupby(pd.Grouper(key="Billing Date", freq=freq))["Net Value"]
+                                .sum()
+                                .reset_index()
+                                .rename(columns={"Billing Date": "Period", "Net Value": "Sales"})
+                            )
 
                             days_in_period = (
                                 df.assign(_date_only=df["Billing Date"].dt.date)
@@ -2456,291 +2450,476 @@ elif choice == texts[lang]["sales_tracking"]:
 
                             df_period = df_period.merge(days_in_period, on="Period", how="left")
                             df_period["Days"] = pd.to_numeric(df_period["Days"], errors="coerce").fillna(1)
-
                             df_period["Target"] = df_period["Days"] * per_day_target
-
-                            # ✅ make it look clean (avoid weird x-axis behavior)
                             df_period = df_period.sort_values("Period")
+                            df_period["Ach%"] = np.where(df_period["Target"] > 0, (df_period["Sales"] / df_period["Target"]) * 100, 0.0)
+                            df_period["Gap"] = df_period["Sales"] - df_period["Target"]
 
-                            fig_trend = go.Figure()
-                            fig_trend.add_trace(go.Scatter(
-                                x=df_period["Period"], y=df_period["Sales"],
-                                mode="lines+markers", name="Actual",
-                                line=dict(width=3),
-                                marker=dict(size=6)
-                            ))
-                            fig_trend.add_trace(go.Scatter(
-                                x=df_period["Period"], y=df_period["Target"],
-                                mode="lines", name="Target",
-                                line=dict(width=2, dash="dot")
-                            ))
+                            with trend_col:
+                                st.markdown(f"### 📌 {gran} Trend (Actual vs Target) + Month-End Forecast")
 
-                            # Forecast line (reference)
-                            fig_trend.add_hline(
-                                y=month_end_forecast,
-                                line_dash="dash",
-                                annotation_text=f"Month-End Forecast: KD {month_end_forecast:,.0f}",
-                                annotation_position="top right"
-                            )
+                                fig_trend = go.Figure()
 
-                            fig_trend.update_layout(
-                                height=420,
-                                template="plotly_white",
-                                margin=dict(l=10, r=10, t=35, b=10),
-                                xaxis_title="Period",
-                                yaxis_title="Net Value (KD)",
-                                hovermode="x unified"
-                            )
-                            fig_trend.update_xaxes(type="date", tickformat="%d-%b")
-                            st.plotly_chart(fig_trend, use_container_width=True)
+                                fig_trend.add_trace(go.Scatter(
+                                    x=df_period["Period"],
+                                    y=df_period["Target"],
+                                    mode="lines",
+                                    name="Target",
+                                    line=dict(width=3, dash="dot", color="#F59E0B")
+                                ))
 
-                            with st.expander("📋 Trend Summary Table", expanded=False):
-                                view_tbl = df_period.copy()
-                                view_tbl["Ach%"] = np.where(view_tbl["Target"] > 0, (view_tbl["Sales"] / view_tbl["Target"]) * 100, 0)
-                                view_tbl["Gap"] = view_tbl["Sales"] - view_tbl["Target"]
-                                st.dataframe(view_tbl[["Period", "Sales", "Target", "Ach%", "Gap"]], use_container_width=True)
+                                fig_trend.add_trace(go.Scatter(
+                                    x=df_period["Period"],
+                                    y=df_period["Sales"],
+                                    mode="lines",
+                                    line=dict(width=0),
+                                    fill="tozeroy",
+                                    fillcolor="rgba(37,99,235,0.12)",
+                                    showlegend=False,
+                                    hoverinfo="skip"
+                                ))
 
-                        with c2:
-                            st.markdown("### 🍕 Channel Split (Retail vs E-com)")
+                                fig_trend.add_trace(go.Scatter(
+                                    x=df_period["Period"],
+                                    y=df_period["Sales"],
+                                    mode="lines+markers",
+                                    name="Actual Sales",
+                                    line=dict(width=4, color="#2563EB"),
+                                    marker=dict(size=8, color="#2563EB")
+                                ))
 
-                            # ✅ Donut pie
-                            fig_pizza = go.Figure(go.Pie(
-                                labels=["Retail", "E-com"],
-                                values=[total_retail, total_ecom],
-                                hole=0.62,
-                                sort=False,
-                                direction="clockwise",
-                                rotation=210,
-                                pull=[0.05, 0.10],
-                                textinfo="percent+label",
-                                textposition="outside",
-                                marker=dict(line=dict(color="white", width=3))
-                            ))
+                                fig_trend.add_hline(
+                                    y=month_end_forecast,
+                                    line_dash="dash",
+                                    line_color="#10B981",
+                                    annotation_text=f"Forecast: KD {month_end_forecast:,.0f}",
+                                    annotation_position="top right"
+                                )
 
-                            fig_pizza.update_layout(
-                                height=300,
-                                template="plotly_white",
-                                margin=dict(l=10, r=10, t=35, b=10),
-                                showlegend=False,
-                                annotations=[dict(
-                                    text=f"Total<br><b>KD {total_all:,.0f}</b>",
-                                    x=0.5, y=0.5, showarrow=False, font=dict(size=14)
-                                )]
-                            )
-                            st.plotly_chart(fig_pizza, use_container_width=True)
+                                fig_trend.update_layout(
+                                    height=460,
+                                    template="plotly_white",
+                                    margin=dict(l=12, r=12, t=40, b=12),
+                                    paper_bgcolor="white",
+                                    plot_bgcolor="#F8FAFC",
+                                    font=dict(family="Segoe UI, Arial, sans-serif", size=13),
+                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                                    hovermode="x unified"
+                                )
+                                fig_trend.update_xaxes(type="date", tickformat="%d-%b")
+                                fig_trend.update_yaxes(title="Net Value (KD)", gridcolor="rgba(148,163,184,0.18)")
+                                st.plotly_chart(fig_trend, use_container_width=True)
 
-                            # ✅ Channel values table (Retail, E-com, Total)
-                            ch_tbl = pd.DataFrame({
-                                "Channel": ["Retail", "E-com", "TOTAL"],
-                                "Sales (KD)": [total_retail, total_ecom, total_all],
-                                "Share %": [retail_share, ecom_share, 100.0 if total_all > 0 else 0.0]
-                            })
-                            st.dataframe(ch_tbl, use_container_width=True, hide_index=True)
+                            with summary_col:
+                                st.markdown("### 📋 Trend Summary Table")
+                                st.dataframe(
+                                    df_period[["Period", "Sales", "Target", "Ach%", "Gap"]].style.format({
+                                        "Sales": "{:,.0f}",
+                                        "Target": "{:,.0f}",
+                                        "Ach%": "{:.1f}%",
+                                        "Gap": "{:,.0f}",
+                                    }),
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
 
-                            # ✅ Optional mini bar for clarity (clean)
-                            fig_bar = go.Figure(go.Bar(
-                                x=["Retail", "E-com", "TOTAL"],
-                                y=[total_retail, total_ecom, total_all],
-                                text=[f"KD {total_retail:,.0f}", f"KD {total_ecom:,.0f}", f"KD {total_all:,.0f}"],
-                                textposition="outside",
-                                name="Sales"
-                            ))
-                            fig_bar.update_layout(
-                                height=220,
-                                template="plotly_white",
-                                margin=dict(l=10, r=10, t=10, b=10),
-                                xaxis_title="",
-                                yaxis_title="KD"
-                            )
-                            st.plotly_chart(fig_bar, use_container_width=True)
+                            st.markdown("---")
 
-                        st.markdown("---")
+                            # ---------------------------------------------------
+                            # 5️⃣ Channel Split + Category Split
+                            # ---------------------------------------------------
+                            split_col1, split_col2 = st.columns(2, gap="large")
 
-                        # ---------------------------------------------------
-                        # 5️⃣ Channel Trend over time (stacked area) ✅ Retail rename
-                        # ---------------------------------------------------
-                        st.markdown(f"### 📊 {gran} Channel Trend (Retail vs E-com)")
+                            with split_col1:
+                                st.markdown("### 🍕 Channel Split (Retail vs E-com)")
 
-                        tx = df.merge(channels_df[["PY Name 1", "Channels"]], on="PY Name 1", how="left")
-                        tx["Channels"] = (
-                            tx["Channels"].astype(str).str.strip().str.lower()
-                            .replace({"": "retail", "nan": "retail", "none": "retail", "market": "retail"})
-                        )
-                        tx["Ch2"] = np.where(tx["Channels"] == "e-com", "E-com", "Retail")
-
-                        ch_period = (tx.groupby([pd.Grouper(key="Billing Date", freq=freq), "Ch2"])["Net Value"]
-                                    .sum()
-                                    .reset_index()
-                                    .rename(columns={"Billing Date": "Period"}))
-
-                        pivot = ch_period.pivot(index="Period", columns="Ch2", values="Net Value").fillna(0.0)
-                        for col in ["Retail", "E-com"]:
-                            if col not in pivot.columns:
-                                pivot[col] = 0.0
-                        pivot = pivot[["Retail", "E-com"]].reset_index().sort_values("Period")
-
-                        fig_area = go.Figure()
-                        fig_area.add_trace(go.Scatter(
-                            x=pivot["Period"], y=pivot["Retail"], mode="lines", name="Retail", stackgroup="one"
-                        ))
-                        fig_area.add_trace(go.Scatter(
-                            x=pivot["Period"], y=pivot["E-com"], mode="lines", name="E-com", stackgroup="one"
-                        ))
-                        fig_area.update_layout(
-                            height=420,
-                            template="plotly_white",
-                            margin=dict(l=10, r=10, t=35, b=10),
-                            xaxis_title="Period",
-                            yaxis_title="Net Value (KD)",
-                            hovermode="x unified"
-                        )
-                        fig_area.update_xaxes(type="date", tickformat="%d-%b")
-                        st.plotly_chart(fig_area, use_container_width=True)
-
-                        st.markdown("---")
-
-                        # ---------------------------------------------------
-                        # 6️⃣ Salesman Performance (Achievement %, Gap, Contribution)
-                        # ---------------------------------------------------
-                        st.markdown("### 💪 Salesman Performance (Analytical)")
-
-                        salesman_col = None
-                        for c in ["Driver Name EN", "Salesman", "Sales Rep", "Salesperson"]:
-                            if c in df.columns:
-                                salesman_col = c
-                                break
-
-                        if salesman_col is None:
-                            st.info("Salesman column not found, skipping salesman charts.")
-                        else:
-                            sales_by_sm = df.groupby(salesman_col)["Net Value"].sum().sort_values(ascending=False)
-
-                            if (target_df is not None) and (salesman_col in target_df.columns) and ("KA Target" in target_df.columns):
-                                tgt = target_df[[salesman_col, "KA Target"]].copy()
-                                tgt["KA Target"] = pd.to_numeric(tgt["KA Target"], errors="coerce").fillna(0.0)
-
-                                sm = (sales_by_sm.reset_index()
-                                    .rename(columns={salesman_col: "Salesman", "Net Value": "Sales"})
-                                    .merge(tgt.rename(columns={salesman_col: "Salesman"}), on="Salesman", how="left")
-                                    .fillna({"KA Target": 0.0}))
-                            else:
-                                sm = sales_by_sm.reset_index()
-                                sm.columns = ["Salesman", "Sales"]
-                                sm["KA Target"] = 0.0
-
-                            sm["Achievement %"] = np.where(sm["KA Target"] > 0, (sm["Sales"] / sm["KA Target"]) * 100, 0.0)
-                            sm["Gap"] = sm["Sales"] - sm["KA Target"]
-                            total_sm_sales = float(sm["Sales"].sum()) if float(sm["Sales"].sum()) != 0 else 1.0
-                            sm["Contribution %"] = (sm["Sales"] / total_sm_sales) * 100
-
-                            sm_view = sm.sort_values("Sales", ascending=False).head(20)
-
-                            cc1, cc2 = st.columns([0.55, 0.45], gap="large")
-
-                            with cc1:
-                                st.markdown("#### 🎯 Achievement % (Top 20)")
-                                fig_ach = go.Figure(go.Bar(
-                                    x=sm_view["Salesman"],
-                                    y=sm_view["Achievement %"],
-                                    text=[f"{v:.1f}%" for v in sm_view["Achievement %"]],
+                                fig_pizza = go.Figure(go.Pie(
+                                    labels=["Retail", "E-com"],
+                                    values=[total_retail, total_ecom],
+                                    hole=0.68,
+                                    sort=False,
+                                    direction="clockwise",
+                                    rotation=220,
+                                    pull=[0.03, 0.08],
+                                    textinfo="percent+label",
                                     textposition="outside",
-                                    name="Achievement %"
+                                    marker=dict(
+                                        colors=["#3B82F6", "#10B981"],
+                                        line=dict(color="white", width=4)
+                                    )
                                 ))
-                                fig_ach.update_layout(
-                                    height=420,
+
+                                fig_pizza.update_layout(
+                                    height=360,
                                     template="plotly_white",
-                                    margin=dict(l=10, r=10, t=25, b=10),
-                                    yaxis_title="Achievement %",
-                                    xaxis_title="Salesman"
+                                    margin=dict(l=10, r=10, t=40, b=10),
+                                    paper_bgcolor="white",
+                                    plot_bgcolor="white",
+                                    showlegend=False,
+                                    font=dict(family="Segoe UI, Arial, sans-serif"),
+                                    annotations=[dict(
+                                        text=f"Total<br><b>KD {total_all:,.0f}</b>",
+                                        x=0.5, y=0.5,
+                                        showarrow=False,
+                                        font=dict(size=18, color="#0F172A")
+                                    )]
                                 )
-                                st.plotly_chart(fig_ach, use_container_width=True)
+                                st.plotly_chart(fig_pizza, use_container_width=True)
 
-                            with cc2:
-                                st.markdown("#### 📌 Top 3 / Bottom 3 Quick View")
-                                top3 = sm.sort_values("Sales", ascending=False).head(3)[["Salesman", "Sales", "Achievement %"]]
-                                bot3 = sm.sort_values("Sales", ascending=True).head(3)[["Salesman", "Sales", "Achievement %"]]
-
-                                st.write("✅ Top 3")
-                                st.dataframe(top3, use_container_width=True, hide_index=True)
-                                st.write("⚠️ Bottom 3")
-                                st.dataframe(bot3, use_container_width=True, hide_index=True)
-
-                            with st.expander("📋 Salesman Detail Table (All)", expanded=False):
-                                sm_tbl = sm.sort_values("Sales", ascending=False)[
-                                    ["Salesman", "Sales", "KA Target", "Achievement %", "Gap", "Contribution %"]
-                                ]
-                                st.dataframe(sm_tbl, use_container_width=True, hide_index=True)
-
-                        st.markdown("---")
-
-                        # ---------------------------------------------------
-                        # 7️⃣ Key Drivers
-                        # ---------------------------------------------------
-                        st.markdown("### 🏆 Key Drivers")
-
-                        d1, d2 = st.columns(2, gap="large")
-
-                        with d1:
-                            st.markdown("#### 👤 Top 10 Customers by Sales")
-                            if "PY Name 1" not in df.columns:
-                                st.error("⚠️ 'PY Name 1' column not found!")
-                            else:
-                                top10_c = (df.groupby("PY Name 1")["Net Value"]
-                                        .sum().sort_values(ascending=False).head(10)
-                                        .reset_index()
-                                        .rename(columns={"PY Name 1": "Customer", "Net Value": "Sales"}))
-                                top10_c = top10_c.sort_values("Sales", ascending=True)
-
-                                fig_top10c = go.Figure(go.Bar(
-                                    x=top10_c["Sales"],
-                                    y=top10_c["Customer"],
-                                    orientation="h",
-                                    text=[f"KD {v:,.0f}" for v in top10_c["Sales"]],
-                                    textposition="outside"
-                                ))
-                                fig_top10c.update_layout(
-                                    height=450,
-                                    template="plotly_white",
-                                    margin=dict(l=10, r=10, t=25, b=10),
-                                    xaxis_title="Net Value (KD)",
-                                    yaxis_title=""
+                                ch_tbl = pd.DataFrame({
+                                    "Channel": ["Retail", "E-com", "TOTAL"],
+                                    "Sales (KD)": [total_retail, total_ecom, total_all],
+                                    "Share %": [retail_share, ecom_share, 100.0 if total_all > 0 else 0.0]
+                                })
+                                st.dataframe(
+                                    ch_tbl.style.format({
+                                        "Sales (KD)": "{:,.0f}",
+                                        "Share %": "{:.1f}%"
+                                    }),
+                                    use_container_width=True,
+                                    hide_index=True
                                 )
-                                st.plotly_chart(fig_top10c, use_container_width=True)
 
-                        with d2:
-                            st.markdown("#### 🧾 Top 10 SKU by Sales (optional)")
-                            sku_col = None
-                            for c in ["Material Description", "Material", "SKU", "Material Code"]:
+                            with split_col2:
+                                st.markdown("### 🧩 Category Split (Chilled / Frozen / Grocery)")
+
+                                cat_df = df.copy()
+                                price_df = st.session_state.get("price_df", pd.DataFrame()).copy()
+
+                                if "Material Description" not in cat_df.columns:
+                                    st.warning("⚠️ 'Material Description' column not found in current MTD data.")
+                                elif price_df.empty:
+                                    st.warning("⚠️ Price list sheet is empty or not loaded.")
+                                elif "Material Description" not in price_df.columns:
+                                    st.warning("⚠️ 'Material Description' column not found in price list sheet.")
+                                else:
+                                    cat_df["_mat_norm"] = (
+                                        cat_df["Material Description"].astype(str).str.strip().str.upper()
+                                    )
+                                    price_df["_mat_norm"] = (
+                                        price_df["Material Description"].astype(str).str.strip().str.upper()
+                                    )
+                                    price_df = price_df.drop_duplicates("_mat_norm", keep="first")
+
+                                    category_col = None
+                                    for c in ["Category", "CATEGORY", "Material Category", "Group", "Division"]:
+                                        if c in price_df.columns:
+                                            category_col = c
+                                            break
+
+                                    if category_col is None:
+                                        st.warning("⚠️ Category column not found in price list sheet.")
+                                    else:
+                                        price_map = price_df.set_index("_mat_norm")
+                                        cat_df["Category"] = cat_df["_mat_norm"].map(price_map[category_col]).fillna("Unmapped")
+
+                                        cat_sales = (
+                                            cat_df[cat_df["Category"].isin(["Chilled", "Frozen", "Grocery"])]
+                                            .groupby("Category", dropna=False)["Net Value"]
+                                            .sum()
+                                            .reindex(["Chilled", "Frozen", "Grocery"], fill_value=0.0)
+                                            .reset_index()
+                                            .rename(columns={"Net Value": "Sales"})
+                                        )
+
+                                        total_cat = float(cat_sales["Sales"].sum())
+                                        cat_sales["Share %"] = np.where(
+                                            total_cat > 0,
+                                            (cat_sales["Sales"] / total_cat * 100),
+                                            0.0
+                                        )
+
+                                        fig_cat = go.Figure(go.Pie(
+                                            labels=cat_sales["Category"],
+                                            values=cat_sales["Sales"],
+                                            hole=0.68,
+                                            sort=False,
+                                            direction="clockwise",
+                                            rotation=220,
+                                            pull=[0.04, 0.04, 0.04],
+                                            textinfo="percent+label",
+                                            textposition="outside",
+                                            marker=dict(
+                                                colors=["#3B82F6", "#F97316", "#10B981"],
+                                                line=dict(color="white", width=4)
+                                            )
+                                        ))
+
+                                        fig_cat.update_layout(
+                                            height=360,
+                                            template="plotly_white",
+                                            margin=dict(l=10, r=10, t=40, b=10),
+                                            paper_bgcolor="white",
+                                            plot_bgcolor="white",
+                                            showlegend=False,
+                                            font=dict(family="Segoe UI, Arial, sans-serif"),
+                                            annotations=[dict(
+                                                text=f"Total<br><b>KD {total_cat:,.0f}</b>",
+                                                x=0.5, y=0.5,
+                                                showarrow=False,
+                                                font=dict(size=18, color="#0F172A")
+                                            )]
+                                        )
+                                        st.plotly_chart(fig_cat, use_container_width=True)
+
+                                        cat_tbl = pd.DataFrame({
+                                            "Category": ["Chilled", "Frozen", "Grocery", "TOTAL"],
+                                            "Sales (KD)": [
+                                                float(cat_sales.loc[cat_sales["Category"] == "Chilled", "Sales"].sum()),
+                                                float(cat_sales.loc[cat_sales["Category"] == "Frozen", "Sales"].sum()),
+                                                float(cat_sales.loc[cat_sales["Category"] == "Grocery", "Sales"].sum()),
+                                                total_cat
+                                            ],
+                                            "Share %": [
+                                                float(cat_sales.loc[cat_sales["Category"] == "Chilled", "Share %"].sum()),
+                                                float(cat_sales.loc[cat_sales["Category"] == "Frozen", "Share %"].sum()),
+                                                float(cat_sales.loc[cat_sales["Category"] == "Grocery", "Share %"].sum()),
+                                                100.0 if total_cat > 0 else 0.0
+                                            ]
+                                        })
+
+                                        st.dataframe(
+                                            cat_tbl.style.format({
+                                                "Sales (KD)": "{:,.0f}",
+                                                "Share %": "{:.1f}%"
+                                            }),
+                                            use_container_width=True,
+                                            hide_index=True
+                                        )
+
+                            st.markdown("---")
+
+                            # ---------------------------------------------------
+                            # 6️⃣ Channel Trend
+                            # ---------------------------------------------------
+                            st.markdown(f"### 📊 {gran} Channel Trend (Retail vs E-com)")
+
+                            tx = df.merge(channels_df[["PY Name 1", "Channels"]], on="PY Name 1", how="left")
+                            tx["Channels"] = (
+                                tx["Channels"].astype(str).str.strip().str.lower()
+                                .replace({"": "retail", "nan": "retail", "none": "retail", "market": "retail"})
+                            )
+                            tx["Ch2"] = np.where(tx["Channels"] == "e-com", "E-com", "Retail")
+
+                            ch_period = (
+                                tx.groupby([pd.Grouper(key="Billing Date", freq=freq), "Ch2"])["Net Value"]
+                                .sum()
+                                .reset_index()
+                                .rename(columns={"Billing Date": "Period"})
+                            )
+
+                            pivot = ch_period.pivot(index="Period", columns="Ch2", values="Net Value").fillna(0.0)
+                            for col in ["Retail", "E-com"]:
+                                if col not in pivot.columns:
+                                    pivot[col] = 0.0
+                            pivot = pivot[["Retail", "E-com"]].reset_index().sort_values("Period")
+
+                            fig_area = go.Figure()
+                            fig_area.add_trace(go.Scatter(
+                                x=pivot["Period"],
+                                y=pivot["Retail"],
+                                mode="lines",
+                                name="Retail",
+                                line=dict(width=3, color="#3B82F6"),
+                                stackgroup="one"
+                            ))
+                            fig_area.add_trace(go.Scatter(
+                                x=pivot["Period"],
+                                y=pivot["E-com"],
+                                mode="lines",
+                                name="E-com",
+                                line=dict(width=3, color="#10B981"),
+                                stackgroup="one"
+                            ))
+
+                            fig_area.update_layout(
+                                height=440,
+                                template="plotly_white",
+                                margin=dict(l=12, r=12, t=40, b=12),
+                                paper_bgcolor="white",
+                                plot_bgcolor="#F8FAFC",
+                                font=dict(family="Segoe UI, Arial, sans-serif", size=13),
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                            )
+                            fig_area.update_xaxes(type="date", tickformat="%d-%b")
+                            fig_area.update_yaxes(title="Net Value (KD)", gridcolor="rgba(148,163,184,0.18)")
+                            st.plotly_chart(fig_area, use_container_width=True)
+
+                            st.markdown("---")
+
+                            # ---------------------------------------------------
+                            # 7️⃣ Salesman Performance
+                            # ---------------------------------------------------
+                            st.markdown("### 💪 Salesman Performance (Analytical)")
+
+                            salesman_col = None
+                            for c in ["Driver Name EN", "Salesman", "Sales Rep", "Salesperson"]:
                                 if c in df.columns:
-                                    sku_col = c
+                                    salesman_col = c
                                     break
 
-                            if sku_col is None:
-                                st.info("SKU column not found (Material Description / Material / SKU).")
+                            if salesman_col is None:
+                                st.info("Salesman column not found, skipping salesman charts.")
                             else:
-                                top10_sku = (df.groupby(sku_col)["Net Value"]
-                                            .sum().sort_values(ascending=False).head(10)
-                                            .reset_index()
-                                            .rename(columns={sku_col: "SKU", "Net Value": "Sales"}))
-                                top10_sku = top10_sku.sort_values("Sales", ascending=True)
+                                sales_by_sm = df.groupby(salesman_col)["Net Value"].sum().sort_values(ascending=False)
 
-                                fig_top10s = go.Figure(go.Bar(
-                                    x=top10_sku["Sales"],
-                                    y=top10_sku["SKU"],
-                                    orientation="h",
-                                    text=[f"KD {v:,.0f}" for v in top10_sku["Sales"]],
-                                    textposition="outside"
-                                ))
-                                fig_top10s.update_layout(
-                                    height=450,
-                                    template="plotly_white",
-                                    margin=dict(l=10, r=10, t=25, b=10),
-                                    xaxis_title="Net Value (KD)",
-                                    yaxis_title=""
-                                )
-                                st.plotly_chart(fig_top10s, use_container_width=True)
+                                if (target_df is not None) and (salesman_col in target_df.columns) and ("KA Target" in target_df.columns):
+                                    tgt = target_df[[salesman_col, "KA Target"]].copy()
+                                    tgt["KA Target"] = pd.to_numeric(tgt["KA Target"], errors="coerce").fillna(0.0)
 
-                    # --- DOWNLOADS ---
+                                    sm = (
+                                        sales_by_sm.reset_index()
+                                        .rename(columns={salesman_col: "Salesman", "Net Value": "Sales"})
+                                        .merge(tgt.rename(columns={salesman_col: "Salesman"}), on="Salesman", how="left")
+                                        .fillna({"KA Target": 0.0})
+                                    )
+                                else:
+                                    sm = sales_by_sm.reset_index()
+                                    sm.columns = ["Salesman", "Sales"]
+                                    sm["KA Target"] = 0.0
+
+                                sm["Achievement %"] = np.where(sm["KA Target"] > 0, (sm["Sales"] / sm["KA Target"]) * 100, 0.0)
+                                sm["Gap"] = sm["Sales"] - sm["KA Target"]
+                                total_sm_sales = float(sm["Sales"].sum()) if float(sm["Sales"].sum()) != 0 else 1.0
+                                sm["Contribution %"] = (sm["Sales"] / total_sm_sales) * 100
+
+                                sm_view = sm.sort_values("Sales", ascending=False).head(20)
+
+                                cc1, cc2 = st.columns([0.55, 0.45], gap="large")
+
+                                with cc1:
+                                    st.markdown("#### 🎯 Achievement % (Top 20)")
+                                    fig_ach = go.Figure(go.Bar(
+                                        x=sm_view["Salesman"],
+                                        y=sm_view["Achievement %"],
+                                        text=[f"{v:.1f}%" for v in sm_view["Achievement %"]],
+                                        textposition="outside",
+                                        name="Achievement %",
+                                        marker=dict(
+                                            color=sm_view["Achievement %"],
+                                            colorscale="Blues",
+                                            line=dict(color="rgba(255,255,255,0.85)", width=1.5)
+                                        )
+                                    ))
+                                    fig_ach.update_layout(
+                                        height=440,
+                                        template="plotly_white",
+                                        margin=dict(l=12, r=12, t=40, b=12),
+                                        paper_bgcolor="white",
+                                        plot_bgcolor="#F8FAFC",
+                                        font=dict(family="Segoe UI, Arial, sans-serif", size=13)
+                                    )
+                                    fig_ach.update_yaxes(title="Achievement %", gridcolor="rgba(148,163,184,0.18)")
+                                    fig_ach.update_xaxes(title="Salesman")
+                                    st.plotly_chart(fig_ach, use_container_width=True)
+
+                                with cc2:
+                                    st.markdown("#### 📌 Top 3 / Bottom 3 Quick View")
+                                    top3 = sm.sort_values("Sales", ascending=False).head(3)[["Salesman", "Sales", "Achievement %"]]
+                                    bot3 = sm.sort_values("Sales", ascending=True).head(3)[["Salesman", "Sales", "Achievement %"]]
+
+                                    st.write("✅ Top 3")
+                                    st.dataframe(top3, use_container_width=True, hide_index=True)
+                                    st.write("⚠️ Bottom 3")
+                                    st.dataframe(bot3, use_container_width=True, hide_index=True)
+
+                                with st.expander("📋 Salesman Detail Table (All)", expanded=False):
+                                    sm_tbl = sm.sort_values("Sales", ascending=False)[
+                                        ["Salesman", "Sales", "KA Target", "Achievement %", "Gap", "Contribution %"]
+                                    ]
+                                    st.dataframe(sm_tbl, use_container_width=True, hide_index=True)
+
+                            st.markdown("---")
+
+                            # ---------------------------------------------------
+                            # 8️⃣ Key Drivers
+                            # ---------------------------------------------------
+                            st.markdown("### 🏆 Key Drivers")
+
+                            d1, d2 = st.columns(2, gap="large")
+
+                            with d1:
+                                st.markdown("#### 👤 Top 10 Customers by Sales")
+                                if "PY Name 1" not in df.columns:
+                                    st.error("⚠️ 'PY Name 1' column not found!")
+                                else:
+                                    top10_c = (
+                                        df.groupby("PY Name 1")["Net Value"]
+                                        .sum().sort_values(ascending=False).head(10)
+                                        .reset_index()
+                                        .rename(columns={"PY Name 1": "Customer", "Net Value": "Sales"})
+                                    )
+                                    top10_c = top10_c.sort_values("Sales", ascending=True)
+
+                                    fig_top10c = go.Figure(go.Bar(
+                                        x=top10_c["Sales"],
+                                        y=top10_c["Customer"],
+                                        orientation="h",
+                                        text=[f"KD {v:,.0f}" for v in top10_c["Sales"]],
+                                        textposition="outside",
+                                        marker=dict(
+                                            color=top10_c["Sales"],
+                                            colorscale="Blues",
+                                            line=dict(color="rgba(255,255,255,0.85)", width=1.5)
+                                        )
+                                    ))
+                                    fig_top10c.update_layout(
+                                        height=520,
+                                        template="plotly_white",
+                                        margin=dict(l=12, r=12, t=40, b=12),
+                                        paper_bgcolor="white",
+                                        plot_bgcolor="#F8FAFC",
+                                        font=dict(family="Segoe UI, Arial, sans-serif", size=13)
+                                    )
+                                    fig_top10c.update_xaxes(title="Net Value (KD)", gridcolor="rgba(148,163,184,0.18)")
+                                    fig_top10c.update_yaxes(title="")
+                                    st.plotly_chart(fig_top10c, use_container_width=True)
+
+                            with d2:
+                                st.markdown("#### 🧾 Top 10 SKU by Sales")
+                                sku_col = None
+                                for c in ["Material Description", "Material", "SKU", "Material Code"]:
+                                    if c in df.columns:
+                                        sku_col = c
+                                        break
+
+                                if sku_col is None:
+                                    st.info("SKU column not found (Material Description / Material / SKU).")
+                                else:
+                                    top10_sku = (
+                                        df.groupby(sku_col)["Net Value"]
+                                        .sum().sort_values(ascending=False).head(10)
+                                        .reset_index()
+                                        .rename(columns={sku_col: "SKU", "Net Value": "Sales"})
+                                    )
+                                    top10_sku = top10_sku.sort_values("Sales", ascending=True)
+
+                                    fig_top10s = go.Figure(go.Bar(
+                                        x=top10_sku["Sales"],
+                                        y=top10_sku["SKU"],
+                                        orientation="h",
+                                        text=[f"KD {v:,.0f}" for v in top10_sku["Sales"]],
+                                        textposition="outside",
+                                        marker=dict(
+                                            color=top10_sku["Sales"],
+                                            colorscale="Greens",
+                                            line=dict(color="rgba(255,255,255,0.85)", width=1.5)
+                                        )
+                                    ))
+                                    fig_top10s.update_layout(
+                                        height=520,
+                                        template="plotly_white",
+                                        margin=dict(l=12, r=12, t=40, b=12),
+                                        paper_bgcolor="white",
+                                        plot_bgcolor="#F8FAFC",
+                                        font=dict(family="Segoe UI, Arial, sans-serif", size=13)
+                                    )
+                                    fig_top10s.update_xaxes(title="Net Value (KD)", gridcolor="rgba(148,163,184,0.18)")
+                                    fig_top10s.update_yaxes(title="")
+                                    st.plotly_chart(fig_top10s, use_container_width=True)                                    
+            
+            
+            # --- DOWNLOADS ---
                     with tabs[3]:
                         st.subheader(texts[lang]["download_reports_sub"])
                         col1, col2 = st.columns(2)
