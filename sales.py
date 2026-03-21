@@ -5436,7 +5436,9 @@ elif choice == "AI Insights":
             
             
             
-# ---------------- Customer Insights Page (Full Pro Version, Fixed) ----------------
+            
+            
+# ---------------- Customer Insights Page (Full Pro Version, Corrected Branch + Customer 360) ----------------
 elif choice == texts[lang]["customer_insights"]:
     st.title(texts[lang]["customer_insights_title"])
 
@@ -5446,12 +5448,14 @@ elif choice == texts[lang]["customer_insights"]:
         st.stop()
 
     df_rfm = st.session_state["sales_df"].copy()
+    rr_df = st.session_state.get("rr_df", pd.DataFrame()).copy()
+
     if df_rfm.empty:
         st.warning(texts[lang]["rfm_no_data"])
         st.stop()
 
     # Apply salesman filter if applicable
-    if user_role == "salesman" and salesman_name:
+    if user_role == "salesman" and salesman_name and "Driver Name EN" in df_rfm.columns:
         df_rfm = df_rfm[df_rfm["Driver Name EN"] == salesman_name]
 
     # Detect columns robustly
@@ -5460,31 +5464,44 @@ elif choice == texts[lang]["customer_insights"]:
             if n in df.columns:
                 return n
         for c in df.columns:
-            lc = c.lower()
+            lc = str(c).lower()
             for n in candidates:
                 if n.lower() in lc:
                     return c
         return None
 
-    cust_col = find_col(df_rfm, ["SP Name1", "SP Name 1", "SP_Name1", "Customer", "PY Name1", "PY Name 1"])
+    # IMPORTANT SPLIT:
+    # Weekly/CRM tab should stay by Branch
+    weekly_customer_col = find_col(df_rfm, ["SP Name1", "SP Name 1", "SP_Name1", "Branch", "Branch Name"])
+
+    # Customer 360 should use actual customer name
+    cust360_master_col = find_col(df_rfm, ["PY Name 1", "PY Name1", "Customer", "Customer Name"])
+
     date_col = find_col(df_rfm, ["Billing Date", "billing date", "Date"])
     amount_col = find_col(df_rfm, ["Net Value", "NetAmount", "Net Amount", "Amount", "Sales Amount"])
     material_col = find_col(df_rfm, ["Material Description", "Item", "Product", "Material"])
 
-    if None in [cust_col, date_col, amount_col]:
+    # Fallbacks
+    if weekly_customer_col is None:
+        weekly_customer_col = cust360_master_col
+    if cust360_master_col is None:
+        cust360_master_col = weekly_customer_col
+
+    if None in [weekly_customer_col, date_col, amount_col]:
         st.warning(texts[lang]["rfm_no_data"])
         st.stop()
 
-    # Normalize date col
+    # Normalize core cols
     df_rfm[date_col] = pd.to_datetime(df_rfm[date_col], errors="coerce")
+    df_rfm[amount_col] = pd.to_numeric(df_rfm[amount_col], errors="coerce").fillna(0.0)
     today = pd.Timestamp.today().normalize()
 
-    # --- Fixed robust RFM aggregation ---
-    rfm_group = df_rfm.groupby(cust_col)
+    # --- Fixed robust RFM aggregation (kept on weekly/branch base like your old logic) ---
+    rfm_group = df_rfm.groupby(weekly_customer_col)
 
     rfm_agg = pd.DataFrame({
         "Customer": rfm_group.apply(lambda g: g.name),
-        "Recency": rfm_group[date_col].max().apply(lambda d: (today - d).days),
+        "Recency": rfm_group[date_col].max().apply(lambda d: (today - d).days if pd.notna(d) else 9999),
         "Frequency": rfm_group[date_col].count(),
         "Monetary": rfm_group[amount_col].sum()
     }).reset_index(drop=True)
@@ -5501,21 +5518,25 @@ elif choice == texts[lang]["customer_insights"]:
         unique_vals = pd.unique(s)
         n_unique = len(unique_vals)
         if n_unique == 1:
-            return pd.Series([1]*len(s), index=s.index)
+            return pd.Series([1] * len(s), index=s.index)
         if n_unique < q:
-            ranks = s.rank(method='dense', ascending=not reverse)
+            ranks = s.rank(method="dense", ascending=not reverse)
             return ranks.astype(int)
-        labels = list(range(q, 0, -1)) if reverse else list(range(1, q+1))
+        labels = list(range(q, 0, -1)) if reverse else list(range(1, q + 1))
         try:
-            return pd.qcut(s, q=q, labels=labels, duplicates='drop')
+            return pd.qcut(s, q=q, labels=labels, duplicates="drop")
         except Exception:
-            ranks = s.rank(method='dense', ascending=not reverse)
+            ranks = s.rank(method="dense", ascending=not reverse)
             return ranks.astype(int)
 
     rfm_agg["R_Score"] = safe_qcut(rfm_agg["Recency"], q=4, reverse=True).astype(int)
     rfm_agg["F_Score"] = safe_qcut(rfm_agg["Frequency"], q=4).astype(int)
     rfm_agg["M_Score"] = safe_qcut(rfm_agg["Monetary"], q=4).astype(int)
-    rfm_agg["RFM_Score"] = rfm_agg["R_Score"].astype(str) + rfm_agg["F_Score"].astype(str) + rfm_agg["M_Score"].astype(str)
+    rfm_agg["RFM_Score"] = (
+        rfm_agg["R_Score"].astype(str)
+        + rfm_agg["F_Score"].astype(str)
+        + rfm_agg["M_Score"].astype(str)
+    )
 
     # Segmentation
     def rfm_segment(row):
@@ -5535,116 +5556,40 @@ elif choice == texts[lang]["customer_insights"]:
 
     rfm_agg["Segment"] = rfm_agg.apply(rfm_segment, axis=1)
 
-    # --- Layout Tabs: RFM, Cohort, Weekly CRM ---
+    # --- Layout Tabs ---
     tab_weekly, tab_360 = st.tabs([
-    # texts[lang]["rfm_analysis_sub"], 
-    # texts[lang]["rfm_cohort_sub"], 
-    "CRM & Weekly Operations",
-    "Customer 360°"  # ← NEW TAB
-])
-
-    # # ---------------- RFM Tab ----------------
-    # with tab_rfm:
-    #     st.subheader(texts[lang]["rfm_table_sub"])
-    #     display_rfm = rfm_agg.copy()
-    #     display_rfm[["Recency","Frequency","Monetary"]] = display_rfm[["Recency","Frequency","Monetary"]].astype(int)
-    #     st.dataframe(display_rfm.sort_values("Monetary", ascending=False), use_container_width=True, hide_index=True)
-
-    #     # Download with safe sheet name
-    #     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    #     safe_sheet = "RFM_Analysis"[:31]
-    #     if st.download_button(
-    #         texts[lang]["rfm_download"],
-    #         data=to_excel_bytes(display_rfm.reset_index(), sheet_name=safe_sheet),
-    #         file_name=f"rfm_analysis_{ts}.xlsx"
-    #     ):
-    #         st.session_state["audit_log"].append({"user": username, "action":"download","details":f"rfm_analysis_{ts}.xlsx","timestamp":datetime.now().isoformat()})
-
-    #     # Segment Pie + metrics
-    #     st.subheader("RFM Segment Distribution")
-    #     seg_counts = display_rfm["Segment"].value_counts().reset_index()
-    #     seg_counts.columns = ["Segment", "Count"]
-    #     seg_counts["Percentage"] = (seg_counts["Count"]/seg_counts["Count"].sum()*100).round(1)
-    #     seg_avg = display_rfm.groupby("Segment")["Monetary"].mean().round(2).reset_index().rename(columns={"Monetary":"Avg Monetary"})
-    #     seg_counts = seg_counts.merge(seg_avg, on="Segment", how="left")
-    #     fig_seg = px.pie(seg_counts, names="Segment", values="Count", hole=0.35, hover_data=["Percentage","Avg Monetary"], title="RFM Segment Distribution")
-    #     fig_seg.update_traces(textinfo='percent+label')
-    #     st.plotly_chart(fig_seg, use_container_width=True)
-
-    #     st.subheader("Key Metrics per Segment")
-    #     seg_metrics = display_rfm.groupby("Segment").agg(
-    #         mean_recency=("Recency","mean"),
-    #         mean_frequency=("Frequency","mean"),
-    #         mean_monetary=("Monetary","mean"),
-    #         count=("R_Score","count")
-    #     ).round(2).rename(columns={"count":"Count"})
-    #     st.dataframe(seg_metrics, use_container_width=True, hide_index=True)
-
-    #     st.subheader("Prescriptive Actions per Segment")
-    #     recs = {
-    #         "Champions":"Reward with exclusive offers & loyalty programs.",
-    #         "Loyal Customers":"Upsell & referrals.",
-    #         "Potential Loyalists":"Nurture with targeted campaigns.",
-    #         "New Customers":"Onboard & incentivize repeat purchase.",
-    #         "At Risk":"Win-back campaigns and surveys.",
-    #         "Hibernating":"Reactivate with promotions.",
-    #         "Others":"Investigate further."
-    #     }
-    #     for s in seg_metrics.index:
-    #         st.write(f"- **{s}**: {recs.get(s,'General engagement strategies recommended.')}")
-
-    #     st.subheader(texts[lang]["rfm_chart_sub"])
-    #     fig_rfm = px.scatter(display_rfm.reset_index(), x="Recency", y="Monetary", size="Frequency", color="Segment",
-    #                          hover_name=display_rfm.reset_index()["Customer"], title="RFM Scatter (Recency vs Monetary; size=Frequency)")
-    #     st.plotly_chart(fig_rfm, use_container_width=True)
-
-    # # ---------------- Cohort Tab (Fixed) ----------------
-    # with tab_cohort:
-    #     st.subheader(texts[lang]["rfm_cohort_sub"])
-    #     st.info(texts[lang]["rfm_cohort_info"])
-
-    #     df_cohort = df_rfm[[cust_col, date_col, amount_col]].dropna().copy().rename(columns={cust_col:"Customer", date_col:"Billing Date"})
-
-    #     # Convert periods to strings
-    #     df_cohort["Cohort_Month_Str"] = df_cohort.groupby("Customer")["Billing Date"].transform("min").dt.to_period("M").astype(str)
-    #     df_cohort["Period_Month_Str"] = df_cohort["Billing Date"].dt.to_period("M").astype(str)
-    #     df_cohort["Cohort_Index"] = (pd.to_datetime(df_cohort["Period_Month_Str"]) - pd.to_datetime(df_cohort["Cohort_Month_Str"])).dt.days // 30
-
-    #     cohort_summary = df_cohort.groupby(["Cohort_Month_Str","Cohort_Index"]).agg(
-    #         Customer=("Customer","nunique"),
-    #         Monetary=(amount_col,"mean")
-    #     ).reset_index()
-
-    #     if not cohort_summary.empty:
-    #         cohort_pivot = cohort_summary.pivot(index="Cohort_Month_Str", columns="Cohort_Index", values="Monetary").fillna(0)
-    #         fig_cohort = px.imshow(cohort_pivot, labels=dict(x="Months after acquisition", y="Cohort", color="Avg Monetary"),
-    #                                title="Cohort Monetary Heatmap", text_auto=True, aspect="auto")
-    #         st.plotly_chart(fig_cohort, use_container_width=True)
-
-    #         st.subheader(texts[lang]["rfm_cohort_table_sub"])
-    #         cohort_table = cohort_summary.pivot(index="Cohort_Month_Str", columns="Cohort_Index", values="Customer").fillna(0).astype(int)
-    #         st.dataframe(cohort_table, use_container_width=True, hide_index=True)
-    #     else:
-    #         st.warning(texts[lang]["rfm_cohort_no_data"])
+        "CRM & Weekly Operations",
+        "Customer 360°"
+    ])
 
     # ---------------- CRM & Weekly Operations Tab ----------------
     with tab_weekly:
         st.subheader("CRM Operations — Weekly Tracker, Products & Manager Dashboard")
 
         # Date selector
-        col_left, col_right = st.columns([3,1])
+        col_left, col_right = st.columns([3, 1])
         with col_left:
             auto_date = st.toggle("Use current date automatically", value=True)
-            selected_date = datetime.now().date() if auto_date else st.date_input("Select visit date manually", datetime.now().date())
+            selected_date = datetime.now().date() if auto_date else st.date_input(
+                "Select visit date manually",
+                datetime.now().date()
+            )
             st.session_state["visit_date"] = selected_date
 
         with col_right:
             show_manager = st.checkbox("Show Manager KPIs", value=True)
-            refresh = st.button("🔄 Refresh")  # triggers rerun
+            refresh = st.button("🔄 Refresh")
 
         # Prepare commonly used variables
         ytd_df = st.session_state.get("ytd_df", pd.DataFrame()).copy()
         sales_df = st.session_state.get("sales_df", pd.DataFrame()).copy()
+
+        # Apply salesman filter
+        if user_role == "salesman" and salesman_name:
+            if not ytd_df.empty and "Driver Name EN" in ytd_df.columns:
+                ytd_df = ytd_df[ytd_df["Driver Name EN"] == salesman_name]
+            if not sales_df.empty and "Driver Name EN" in sales_df.columns:
+                sales_df = sales_df[sales_df["Driver Name EN"] == salesman_name]
 
         # Ensure date cols
         if date_col in ytd_df.columns:
@@ -5652,11 +5597,17 @@ elif choice == texts[lang]["customer_insights"]:
         if date_col in sales_df.columns:
             sales_df[date_col] = pd.to_datetime(sales_df[date_col], errors="coerce")
 
-        # ---------------- Weekly Visit Tracker (robust) ----------------
+        # ---------------- Weekly Visit Tracker (BY BRANCH) ----------------
         st.markdown("### Weekly Visit Tracker")
         last_3_months = pd.Timestamp(selected_date) - pd.DateOffset(months=3)
+
         recent_ytd = ytd_df[ytd_df.get(date_col, pd.Series()) >= last_3_months] if not ytd_df.empty else pd.DataFrame()
-        customer_list = pd.Series(recent_ytd.get(cust_col, pd.Series()).dropna().unique()).astype(str) if not recent_ytd.empty else pd.Series(sales_df.get(cust_col, pd.Series()).dropna().unique()).astype(str)
+
+        customer_list = (
+            pd.Series(recent_ytd.get(weekly_customer_col, pd.Series()).dropna().unique()).astype(str)
+            if not recent_ytd.empty
+            else pd.Series(sales_df.get(weekly_customer_col, pd.Series()).dropna().unique()).astype(str)
+        )
 
         if customer_list.empty:
             st.info("No customers found in YTD or Sales for the last 3 months.")
@@ -5667,14 +5618,24 @@ elif choice == texts[lang]["customer_insights"]:
             sales_window_start = days_dt[0]
             sales_window_end = pd.Timestamp(selected_date) + pd.Timedelta(days=1)
 
-            sales_last7 = sales_df[(sales_df[date_col] >= sales_window_start) & (sales_df[date_col] < sales_window_end)].copy()
-            sales_last7[cust_col] = sales_last7[cust_col].astype(str)
+            sales_last7 = sales_df[
+                (sales_df[date_col] >= sales_window_start) & (sales_df[date_col] < sales_window_end)
+            ].copy()
+
+            sales_last7[weekly_customer_col] = sales_last7[weekly_customer_col].astype(str)
             sales_last7[amount_col] = pd.to_numeric(sales_last7[amount_col], errors="coerce").fillna(0.0)
             sales_last7["__date_str"] = sales_last7[date_col].dt.strftime("%Y-%m-%d")
 
-            pivot7 = (sales_last7.groupby([cust_col, "__date_str"])[amount_col].sum().reset_index()
-                      .pivot(index=cust_col, columns="__date_str", values=amount_col).reindex(columns=days_str, fill_value=0.0).reset_index())
-            pivot7 = pivot7.rename(columns={cust_col: "Customer"})
+            pivot7 = (
+                sales_last7.groupby([weekly_customer_col, "__date_str"])[amount_col]
+                .sum()
+                .reset_index()
+                .pivot(index=weekly_customer_col, columns="__date_str", values=amount_col)
+                .reindex(columns=days_str, fill_value=0.0)
+                .reset_index()
+            )
+            pivot7 = pivot7.rename(columns={weekly_customer_col: "Customer"})
+
             base = pd.DataFrame({"Customer": customer_list})
             visit_df = base.merge(pivot7, on="Customer", how="left").fillna(0.0)
             visit_df.insert(1, "Visit Date", selected_date)
@@ -5685,55 +5646,80 @@ elif choice == texts[lang]["customer_insights"]:
             # 4-week totals
             end_date = pd.Timestamp(selected_date)
             start_date = end_date - pd.Timedelta(weeks=4)
-            recent_sales = sales_df[(sales_df[date_col] >= start_date) & (sales_df[date_col] <= end_date)].copy()
-            recent_sales[cust_col] = recent_sales[cust_col].astype(str)
+
+            recent_sales = sales_df[
+                (sales_df[date_col] >= start_date) & (sales_df[date_col] <= end_date)
+            ].copy()
+
+            recent_sales[weekly_customer_col] = recent_sales[weekly_customer_col].astype(str)
             recent_sales[amount_col] = pd.to_numeric(recent_sales[amount_col], errors="coerce").fillna(0.0)
             recent_sales["Week_Number"] = ((recent_sales[date_col] - start_date).dt.days // 7) + 1
             recent_sales.loc[recent_sales["Week_Number"] > 4, "Week_Number"] = 4
-            week_totals = (recent_sales.groupby([cust_col, "Week_Number"])[amount_col].sum().unstack(fill_value=0).reset_index().rename(columns={cust_col:"Customer"}))
+
+            week_totals = (
+                recent_sales.groupby([weekly_customer_col, "Week_Number"])[amount_col]
+                .sum()
+                .unstack(fill_value=0)
+                .reset_index()
+                .rename(columns={weekly_customer_col: "Customer"})
+            )
+
             week_cols = [c for c in week_totals.columns if c != "Customer"]
             if not week_cols:
-                for i in range(1,5):
+                for i in range(1, 5):
                     week_totals[i] = 0
-                week_cols = [1,2,3,4]
-            ordered_week_cols = sorted(week_cols, key=lambda x:int(x))
+                week_cols = [1, 2, 3, 4]
+
+            ordered_week_cols = sorted(week_cols, key=lambda x: int(x))
             week_totals = week_totals[["Customer"] + ordered_week_cols]
+
             week_headers = []
             for i in range(len(ordered_week_cols)):
-                wstart = (start_date + pd.Timedelta(days=i*7)).strftime("%b %d")
-                wend = (start_date + pd.Timedelta(days=(i+1)*7-1)).strftime("%b %d")
+                wstart = (start_date + pd.Timedelta(days=i * 7)).strftime("%b %d")
+                wend = (start_date + pd.Timedelta(days=(i + 1) * 7 - 1)).strftime("%b %d")
                 week_headers.append(f"Week {i+1} ({wstart}-{wend})")
+
             new_cols = ["Customer"] + week_headers
             if len(new_cols) != len(week_totals.columns):
-                new_cols = ["Customer"] + [f"Week {i+1}" for i in range(len(week_totals.columns)-1)]
+                new_cols = ["Customer"] + [f"Week {i+1}" for i in range(len(week_totals.columns) - 1)]
             week_totals.columns = new_cols
+
             visit_df = visit_df.merge(week_totals, on="Customer", how="left").fillna(0.0)
 
             # Total Sales (3 months)
-            total_sales_3m = sales_df[sales_df[date_col] >= last_3_months].groupby(cust_col)[amount_col].sum().reset_index().rename(columns={cust_col:"Customer", amount_col:"Total Sales"})
+            total_sales_3m = (
+                sales_df[sales_df[date_col] >= last_3_months]
+                .groupby(weekly_customer_col)[amount_col]
+                .sum()
+                .reset_index()
+                .rename(columns={weekly_customer_col: "Customer", amount_col: "Total Sales"})
+            )
             visit_df = visit_df.merge(total_sales_3m, on="Customer", how="left").fillna(0.0)
 
             # Alerts & recommended action
             def compute_alert(row):
                 q80 = visit_df["Total Sales"].quantile(0.8) if "Total Sales" in visit_df.columns else 0
                 q50 = visit_df["Total Sales"].quantile(0.5) if "Total Sales" in visit_df.columns else 0
-                if row.get("Weekly Total",0) == 0:
-                    if row.get("Total Sales",0) >= q80:
+                if row.get("Weekly Total", 0) == 0:
+                    if row.get("Total Sales", 0) >= q80:
                         return "🔴 High", "Visit immediately"
-                    if row.get("Total Sales",0) >= q50:
+                    if row.get("Total Sales", 0) >= q50:
                         return "🟠 Medium", "Call / Email"
                     return "🟢 Low", "Monitor"
                 return "✅ Visited", "No action"
-            visit_df[["Alert Level","Recommended Action"]] = visit_df.apply(lambda r: pd.Series(compute_alert(r)), axis=1)
 
-            # numeric formatting
-            numeric_cols = [c for c in existing_days + ["Weekly Total","Total Sales"] + week_headers if c in visit_df.columns]
+            visit_df[["Alert Level", "Recommended Action"]] = visit_df.apply(lambda r: pd.Series(compute_alert(r)), axis=1)
+
+            numeric_cols = [c for c in existing_days + ["Weekly Total", "Total Sales"] + week_headers if c in visit_df.columns]
             if numeric_cols:
                 visit_df[numeric_cols] = visit_df[numeric_cols].fillna(0).round(0).astype(int)
 
-            # show table
             with st.expander("Show Weekly Visit Table", expanded=True):
-                st.dataframe(visit_df.sort_values(["Total Sales","Weekly Total"], ascending=[False,False]), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    visit_df.sort_values(["Total Sales", "Weekly Total"], ascending=[False, False]),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             # manager KPIs
             if show_manager:
@@ -5741,20 +5727,28 @@ elif choice == texts[lang]["customer_insights"]:
                 col1, col2, col3, col4 = st.columns(4)
                 last7_revenue = sales_last7[amount_col].sum() if not sales_last7.empty else 0
                 col1.metric("Revenue (Last 7 days)", f"KD {last7_revenue:,.0f}")
-                col2.metric("Customers Visited (7d)", int((visit_df["Weekly Total"]>0).sum()))
-                col3.metric("High-Value Missed", int((visit_df["Alert Level"]=="🔴 High").sum()))
+                col2.metric("Customers Visited (7d)", int((visit_df["Weekly Total"] > 0).sum()))
+                col3.metric("High-Value Missed", int((visit_df["Alert Level"] == "🔴 High").sum()))
                 col4.metric("Avg Weekly Sales per Customer", f"KD {visit_df['Weekly Total'].mean():,.0f}")
 
-                top_missed = visit_df[visit_df["Alert Level"]=="🔴 High"].sort_values("Total Sales", ascending=False).head(10)
+                top_missed = visit_df[visit_df["Alert Level"] == "🔴 High"].sort_values("Total Sales", ascending=False).head(10)
                 if not top_missed.empty:
                     st.subheader("Top High-Value Missed Customers")
                     st.bar_chart(top_missed.set_index("Customer")["Total Sales"])
 
             # Save Visit as record (mini CRM)
             st.markdown("### Visit Planner / Notes")
-            planner_customer = st.selectbox("Select Customer to plan visit", options=sorted(visit_df["Customer"].astype(str).unique()))
+            planner_customer = st.selectbox(
+                "Select Customer to plan visit",
+                options=sorted(visit_df["Customer"].astype(str).unique())
+            )
             note = st.text_area("Note / Follow-up", key=f"note_{planner_customer}")
-            next_visit = st.date_input("Next Visit Date", value=(pd.Timestamp(selected_date)+pd.Timedelta(days=7)).date(), key=f"nextvisit_{planner_customer}")
+            next_visit = st.date_input(
+                "Next Visit Date",
+                value=(pd.Timestamp(selected_date) + pd.Timedelta(days=7)).date(),
+                key=f"nextvisit_{planner_customer}"
+            )
+
             if st.button("💾 Save Visit Plan"):
                 if "visit_plans" not in st.session_state:
                     st.session_state["visit_plans"] = []
@@ -5770,31 +5764,42 @@ elif choice == texts[lang]["customer_insights"]:
             if "visit_plans" in st.session_state and st.session_state["visit_plans"]:
                 st.subheader("Saved Visit Plans")
                 st.dataframe(pd.DataFrame(st.session_state["visit_plans"]), use_container_width=True, hide_index=True)
-                # Download visit plans
                 safe_file_name = f"visit_plans_{selected_date}.csv"
-                st.download_button("⬇️ Download Visit Plans", data=pd.DataFrame(st.session_state["visit_plans"]).to_csv(index=False).encode('utf-8'), file_name=safe_file_name, mime="text/csv")
+                st.download_button(
+                    "⬇️ Download Visit Plans",
+                    data=pd.DataFrame(st.session_state["visit_plans"]).to_csv(index=False).encode("utf-8"),
+                    file_name=safe_file_name,
+                    mime="text/csv"
+                )
 
-        # ---------------- 15-Day Product Analysis ----------------
+        # ---------------- 15-Day Product Analysis (BY BRANCH) ----------------
         st.markdown("### Customer Product Activity (Last 15 Days)")
         product_start_date = pd.Timestamp(selected_date) - pd.Timedelta(days=15)
-        prod_sales = sales_df[(sales_df[date_col] >= product_start_date) & (sales_df[date_col] <= pd.Timestamp(selected_date))].copy()
+        prod_sales = sales_df[
+            (sales_df[date_col] >= product_start_date) & (sales_df[date_col] <= pd.Timestamp(selected_date))
+        ].copy()
 
         if prod_sales.empty or material_col is None:
             st.info("No product-sales data available for the last 15 days.")
         else:
-            prod_sales[cust_col] = prod_sales[cust_col].astype(str)
+            prod_sales[weekly_customer_col] = prod_sales[weekly_customer_col].astype(str)
             prod_sales[amount_col] = pd.to_numeric(prod_sales[amount_col], errors="coerce").fillna(0.0)
             all_products = sorted(sales_df[material_col].dropna().unique())
 
-            prod_summary = prod_sales.groupby([cust_col, material_col])[amount_col].sum().reset_index().rename(columns={cust_col:"Customer", material_col:"Product", amount_col:"Sales Amount"})
+            prod_summary = (
+                prod_sales.groupby([weekly_customer_col, material_col])[amount_col]
+                .sum()
+                .reset_index()
+                .rename(columns={weekly_customer_col: "Customer", material_col: "Product", amount_col: "Sales Amount"})
+            )
             customers_prod = sorted(prod_summary["Customer"].unique())
 
             if customers_prod:
                 sel_cust = st.selectbox("Select a Customer to inspect products", options=customers_prod)
-                sold_by_cust = prod_summary[prod_summary["Customer"]==sel_cust].sort_values("Sales Amount", ascending=False)
+                sold_by_cust = prod_summary[prod_summary["Customer"] == sel_cust].sort_values("Sales Amount", ascending=False)
                 sold_set = set(sold_by_cust["Product"].dropna())
                 not_sold = [p for p in all_products if p not in sold_set]
-                df_not_sold = pd.DataFrame({"Product": not_sold, "Status":"❌ Not Purchased"})
+                df_not_sold = pd.DataFrame({"Product": not_sold, "Status": "❌ Not Purchased"})
 
                 with st.expander(f"{sel_cust} - Purchased (Last 15 Days)", expanded=True):
                     if not sold_by_cust.empty:
@@ -5802,278 +5807,639 @@ elif choice == texts[lang]["customer_insights"]:
                     else:
                         st.info("No purchases by this customer in last 15 days.")
 
-
                 with st.expander(f"{sel_cust} - Not Purchased (Last 15 Days)", expanded=False):
                     if not df_not_sold.empty:
                         st.dataframe(df_not_sold, use_container_width=True, hide_index=True)
                     else:
                         st.info("All products purchased!")
 
-
-                # Safe sheet name
-                safe_sheet_name = (sel_cust+"_Purchased")[:31]
-                if st.download_button(f"⬇️ Download {sel_cust} Purchased (15d)",
-                                      data=to_excel_bytes(sold_by_cust, sheet_name=safe_sheet_name),
-                                      file_name=f"{sel_cust}_purchased_15days_{selected_date}.xlsx"):
+                safe_sheet_name = (sel_cust + "_Purchased")[:31]
+                if st.download_button(
+                    f"⬇️ Download {sel_cust} Purchased (15d)",
+                    data=to_excel_bytes(sold_by_cust, sheet_name=safe_sheet_name),
+                    file_name=f"{sel_cust}_purchased_15days_{selected_date}.xlsx"
+                ):
                     st.success("Download ready!")
 
-    # ──────────────────────── TAB 4: Customer 360° (FIXED) ────────────────────────
+
     with tab_360:
-        st.markdown("### **Customer 360° – One-Click Profile**")
-        
-        # === 1. COLUMN DETECTION (Safe & Reusable) ===
-        def find_col(df, candidates):
-            for c in candidates:
-                if c in df.columns:
-                    return c
-            return None
+        st.markdown("### **Customer 360° – Full Commercial Drilldown**")
 
-        cust_col = find_col(df_rfm, ["SP Name1", "SP Name 1", "Customer", "PY Name 1", "Customer Name"])
-        date_col = find_col(df_rfm, ["Billing Date", "Date", "Invoice Date"])
-        amount_col = find_col(df_rfm, ["Net Value", "Amount", "Sales"])
-        driver_col = find_col(df_rfm, ["Driver Name EN", "Salesman", "Driver", "Rep"])
-        material_col = find_col(df_rfm, ["Material", "Material Description", "Item", "SKU"])
+        sales_df_src = st.session_state.get("sales_df", pd.DataFrame()).copy()
+        ytd_df_src = st.session_state.get("ytd_df", pd.DataFrame()).copy()
+        rr_src = st.session_state.get("rr_df", pd.DataFrame()).copy()
 
-        if not all([cust_col, date_col, amount_col]):
-            st.error("Missing required columns. Check your Excel file.")
+        # --------------------------------------------------------
+        # Data Source Selector (NEW)
+        # --------------------------------------------------------
+        src_col1, src_col2, src_col3 = st.columns([0.28, 0.32, 0.40])
+
+        with src_col1:
+            data_source_choice = st.selectbox(
+                "Data Source",
+                ["MTD / Sales Data", "YTD / Historical Data"],
+                index=0,
+                key="cust360_data_source"
+            )
+
+        # Use only ONE source to avoid double counting
+        if data_source_choice == "MTD / Sales Data":
+            sales_src = sales_df_src.copy()
+        else:
+            sales_src = ytd_df_src.copy()
+
+        if user_role == "salesman" and salesman_name and "Driver Name EN" in sales_src.columns:
+            sales_src = sales_src[sales_src["Driver Name EN"] == salesman_name]
+
+        if sales_src.empty:
+            st.warning(f"⚠️ {data_source_choice} is not available.")
             st.stop()
 
-        # === 2. CUSTOMER SELECTOR ===
-        all_customers = sorted(df_rfm[cust_col].dropna().unique())
-        selected_cust = st.selectbox("**Select Customer**", all_customers, key="cust360_select")
+        # --------------------------------------------------------
+        # Column detection
+        # --------------------------------------------------------
+        cust360_col = find_col(sales_src, ["PY Name 1", "PY Name1", "Customer", "Customer Name"])
+        if cust360_col is None:
+            cust360_col = find_col(sales_src, ["SP Name1", "SP Name 1"])
 
-        # === 3. FILTER DATA ===
-        cust_sales = df_rfm[df_rfm[cust_col] == selected_cust].copy()
-        cust_sales[date_col] = pd.to_datetime(cust_sales[date_col], errors='coerce')
-        cust_sales = cust_sales.dropna(subset=[date_col])  # Remove invalid dates
-        today = pd.Timestamp.today()
+        date360_col = find_col(sales_src, ["Billing Date", "Date", "Invoice Date"])
+        amount360_col = find_col(sales_src, ["Net Value", "Amount", "Sales"])
+        branch360_col = find_col(sales_src, ["SP Name1", "SP Name 1", "Branch", "Branch Name"])
+        driver360_col = find_col(sales_src, ["Driver Name EN", "Salesman", "Driver", "Rep"])
+        material360_col = find_col(sales_src, ["Material Description", "Material", "Item", "SKU", "Product"])
+        qty360_col = find_col(sales_src, ["Quantity", "Qty", "Order Qty", "Billed Qty"])
+
+        if not all([cust360_col, date360_col, amount360_col]):
+            st.error("❌ Missing required columns for Customer 360.")
+            st.stop()
+
+        # --------------------------------------------------------
+        # Normalize source data
+        # --------------------------------------------------------
+        sales_src[date360_col] = pd.to_datetime(sales_src[date360_col], errors="coerce")
+        sales_src[amount360_col] = pd.to_numeric(sales_src[amount360_col], errors="coerce").fillna(0.0)
+
+        if qty360_col:
+            sales_src[qty360_col] = pd.to_numeric(sales_src[qty360_col], errors="coerce").fillna(0.0)
+        else:
+            sales_src["__qty__"] = 0.0
+            qty360_col = "__qty__"
+
+        if "Billing Type" not in sales_src.columns:
+            sales_src["Billing Type"] = ""
+        sales_src["Billing Type"] = sales_src["Billing Type"].astype(str).str.strip().str.upper()
+
+        if branch360_col is None:
+            sales_src["__branch__"] = "Unknown"
+            branch360_col = "__branch__"
+
+        if driver360_col is None:
+            sales_src["__driver__"] = "Unknown"
+            driver360_col = "__driver__"
+
+        if material360_col is None:
+            sales_src["__material__"] = "Unknown"
+            material360_col = "__material__"
+
+        sales_src["_cust_norm"] = (
+            sales_src[cust360_col]
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            .str.replace(r"\s+", " ", regex=True)
+        )
+
+        sales_src = sales_src.dropna(subset=[date360_col]).copy()
+
+        # --------------------------------------------------------
+        # Filters
+        # --------------------------------------------------------
+        with src_col2:
+            all_customers = sorted(sales_src[cust360_col].dropna().astype(str).unique().tolist())
+            selected_cust = st.selectbox("Select Customer", all_customers, key="cust360_select_new")
+
+        with src_col3:
+            min_dt = sales_src[date360_col].min().date()
+            max_dt = sales_src[date360_col].max().date()
+            selected_range = st.date_input(
+                "Select Date Range",
+                value=(min_dt, max_dt),
+                key="cust360_date_range_new"
+            )
+
+        if not selected_range or len(selected_range) != 2:
+            st.info("Please select a valid date range.")
+            st.stop()
+
+        start_dt = pd.to_datetime(selected_range[0]).normalize()
+        end_dt = pd.to_datetime(selected_range[1]).normalize()
+
+        selected_cust_norm = (
+            str(selected_cust)
+            .strip()
+            .upper()
+        )
+        selected_cust_norm = " ".join(selected_cust_norm.split())
+
+        cust_sales = sales_src[
+            (sales_src["_cust_norm"] == selected_cust_norm)
+            & (sales_src[date360_col] >= start_dt)
+            & (sales_src[date360_col] <= end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
+        ].copy()
 
         if cust_sales.empty:
-            st.warning(f"No sales data for **{selected_cust}**")
+            st.warning(f"No sales data for **{selected_cust}** in selected date range from **{data_source_choice}**.")
+            st.stop()
+
+        # --------------------------------------------------------
+        # Billing type sets
+        # --------------------------------------------------------
+        SALES_BT = {"ZFR", "YKF2"}
+        RETURN_BT = {"YKRE", "ZRE"}
+        CANCEL_BT = {"YKS1", "YKS2", "ZCAN"}
+
+        sales_mask = cust_sales["Billing Type"].isin(SALES_BT)
+        return_mask = cust_sales["Billing Type"].isin(RETURN_BT)
+        cancel_mask = cust_sales["Billing Type"].isin(CANCEL_BT)
+
+        # --------------------------------------------------------
+        # Invoice count / discount
+        # --------------------------------------------------------
+        invoice_col = None
+        for c in ["Billing Document", "Invoice", "Invoice No", "Sales Document", "Document No"]:
+            if c in cust_sales.columns:
+                invoice_col = c
+                break
+
+        invoice_discount_col = None
+        discount_candidates = [
+            "Invoice Discount",
+            "Discount",
+            "Discount Value",
+            "Inv Discount",
+            "Invoice Discount Value",
+            "Discount Amount",
+            "Invoice Disc",
+            "Disc Value",
+            "Total Discount",
+            "Item Discount",
+        ]
+
+        for c in cust_sales.columns:
+            if str(c).strip() in discount_candidates:
+                invoice_discount_col = c
+                break
+
+        if invoice_discount_col is None:
+            for c in cust_sales.columns:
+                lc = str(c).strip().lower()
+                if "discount" in lc or "disc" in lc:
+                    invoice_discount_col = c
+                    break
+
+        if invoice_discount_col:
+            cust_sales[invoice_discount_col] = pd.to_numeric(cust_sales[invoice_discount_col], errors="coerce").fillna(0.0)
+            invoice_discount_val = float(cust_sales.loc[sales_mask, invoice_discount_col].abs().sum())
         else:
-            # ========================================
-            # KPI CARDS – CUSTOMER 360°
-            # ========================================
-            col1, col2, col3, col4 = st.columns(4)
-            
-            # --- 1. ENSURE amount_col is numeric ---
-            cust_sales[amount_col] = pd.to_numeric(cust_sales[amount_col], errors='coerce').fillna(0)
+            invoice_discount_val = 0.0
 
-            # --- 2. NORMALIZE Billing Type ---
-            if "Billing Type" in cust_sales.columns:
-                cust_sales["Billing Type"] = cust_sales["Billing Type"].astype(str).str.strip().str.upper()
+        # --------------------------------------------------------
+        # Sales logic
+        # --------------------------------------------------------
+        sales_total = float(cust_sales.loc[sales_mask, amount360_col].sum())
+        return_value = float(cust_sales.loc[return_mask, amount360_col].sum())
+        cancel_value = float(cust_sales.loc[cancel_mask, amount360_col].sum())
 
-            # --- 3. TOTAL SALES & ORDERS ---
-            total_sales = cust_sales[amount_col].sum()
-            order_count = len(cust_sales)
-            last_visit = cust_sales[date_col].max()
-            days_since = (today - last_visit).days if pd.notna(last_visit) else 999
+        return_abs = abs(return_value)
+        cancel_abs = abs(cancel_value)
 
-            # --- 4. RETURNS ONLY (YKRE, ZRE) – CANCELLATIONS EXCLUDED ---
-            return_codes = ["YKRE", "ZRE"]  # Only Returns
-            if "Billing Type" in cust_sales.columns:
-                returns_mask = cust_sales["Billing Type"].isin(return_codes)
-            else:
-                returns_mask = cust_sales[date_col].notna() & False  # no returns if column missing
-            returns_df = cust_sales[returns_mask]
+        gross_sales = sales_total
+        net_sales = sales_total - return_abs - cancel_abs
 
-            # --- 5. RETURN VALUE = ABSOLUTE SUM (handles negative values) ---
-            returns_value = returns_df[amount_col].abs().sum()
-            return_rate = (returns_value / total_sales * 100) if total_sales > 0 else 0
+        qty_sold = float(cust_sales.loc[sales_mask, qty360_col].sum())
+        order_count = int(cust_sales[invoice_col].nunique()) if invoice_col else int(cust_sales.loc[sales_mask].shape[0])
+        last_visit = cust_sales[date360_col].max()
+        days_since = (pd.Timestamp.today().normalize() - last_visit.normalize()).days if pd.notna(last_visit) else 999
+        avg_invoice = (net_sales / order_count) if order_count > 0 else 0.0
+        return_rate = (return_abs / gross_sales * 100) if gross_sales > 0 else 0.0
 
-            # === KPI CARD 1: Total Sales ===
-            col1.metric(
-                label="**Total Sales**",
-                value=f"KD {total_sales:,.0f}",
-                delta=None
+        # --------------------------------------------------------
+        # R&R logic
+        # --------------------------------------------------------
+        rebate_pct = 0.0
+        rental_annual = 0.0
+        rental_val = 0.0
+        rebate_value_est = 0.0
+
+        if not rr_src.empty:
+            rr_src = rr_src.copy()
+
+            rr_customer_col = None
+            for c in ["PY Name 1", "PY Name1", "Customer", "Customer Name", "SP Name1", "SP Name 1"]:
+                if c in rr_src.columns:
+                    rr_customer_col = c
+                    break
+
+            rebate_col = None
+            rental_col = None
+
+            for c in rr_src.columns:
+                lc = str(c).strip().lower()
+                if rebate_col is None and ("rebate %" in lc or lc == "rebate" or "rebate percent" in lc or "rebate%" in lc):
+                    rebate_col = c
+                if rental_col is None and (
+                    "display rental value" in lc
+                    or "display rental" in lc
+                    or lc == "rental"
+                    or "annual rental" in lc
+                    or "rental value" in lc
+                ):
+                    rental_col = c
+
+            if rr_customer_col is not None:
+                rr_src["_cust_norm"] = (
+                    rr_src[rr_customer_col]
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
+                    .str.replace(r"\s+", " ", regex=True)
+                )
+
+                if rebate_col is not None:
+                    rr_src[rebate_col] = pd.to_numeric(rr_src[rebate_col], errors="coerce").fillna(0.0)
+                else:
+                    rr_src["__rebate__"] = 0.0
+                    rebate_col = "__rebate__"
+
+                if rental_col is not None:
+                    rr_src[rental_col] = pd.to_numeric(rr_src[rental_col], errors="coerce").fillna(0.0)
+                else:
+                    rr_src["__rental__"] = 0.0
+                    rental_col = "__rental__"
+
+                rr_match = rr_src[rr_src["_cust_norm"] == selected_cust_norm].copy()
+
+                if not rr_match.empty:
+                    rr_first = rr_match.iloc[0]
+
+                    rebate_pct = float(pd.to_numeric(rr_first[rebate_col], errors="coerce")) if pd.notna(rr_first[rebate_col]) else 0.0
+                    rental_annual = float(pd.to_numeric(rr_first[rental_col], errors="coerce")) if pd.notna(rr_first[rental_col]) else 0.0
+
+                    period_days = max((end_dt - start_dt).days + 1, 1)
+                    year_factor = period_days / 365.0
+                    rental_val = rental_annual * year_factor
+
+        rebate_value_est = (max(net_sales, 0) * rebate_pct / 100.0) if rebate_pct > 0 else 0.0
+
+        # --------------------------------------------------------
+        # KPI strip (Gross Sales removed only)
+        # --------------------------------------------------------
+        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        k1.metric("Net Sales", f"KD {net_sales:,.0f}")
+        k2.metric("Returns", f"KD {return_value:,.0f}")
+        k3.metric("Return Rate", f"{return_rate:.2f}%")
+        k4.metric("Rental", f"KD {rental_val:,.0f}")
+        k5.metric("Rebate %", f"{rebate_pct:.2f}%")
+        k6.metric("Invoice Discount", f"KD {invoice_discount_val:,.0f}")
+
+        k7, k8, k9 = st.columns(3)
+        k7.metric("Invoices", f"{order_count:,}")
+        k8.metric("Avg Invoice", f"KD {avg_invoice:,.0f}")
+        k9.metric("Last Visit", last_visit.strftime("%Y-%m-%d") if pd.notna(last_visit) else "-")
+
+        st.caption(
+            f"Source: {data_source_choice} | Customer: {selected_cust} | Period: {start_dt.date()} to {end_dt.date()} | "
+            f"Days Since Last Visit: {days_since} | Rebate Value (Net Sales Basis): KD {rebate_value_est:,.0f}"
+        )
+
+        st.markdown("---")
+
+        mini1, mini2, mini3, mini4, mini5, mini6 = st.tabs([
+            "Sales Trend",
+            "RFM",
+            "Branch & Salesman",
+            "Products / SKU",
+            "Billing & Support",
+            "Actions & Download"
+        ])
+
+        # --------------------------------------------------------
+        # Sales Trend
+        # --------------------------------------------------------
+        with mini1:
+            daily = (
+                cust_sales.groupby(cust_sales[date360_col].dt.date)[amount360_col]
+                .sum()
+                .reset_index()
             )
+            daily.columns = ["Date", "Sales"]
 
-            # === KPI CARD 2: Orders ===
-            col2.metric(
-                label="**Orders**",
-                value=f"{order_count:,}",
-                delta=None
-            )
-
-            # === KPI CARD 3: Last Visit ===
-            if pd.notna(last_visit):
-                col3.metric(
-                    label="**Last Visit**",
-                    value=last_visit.strftime("%b %d, %Y"),
-                    delta=f"{days_since} days ago" if days_since <= 365 else "Over 1 year",
-                    delta_color="inverse" if days_since > 30 else "normal"
-                )
-            else:
-                col3.metric(
-                    label="**Last Visit**",
-                    value="Never",
-                    delta="No data"
-                )
-
-            # === KPI CARD 4: Return Rate + Value (COMBINED) ===
-            if returns_value > 0:
-                col4.metric(
-                    label="**Return Rate**",
-                    value=f"{return_rate:.2f}%",
-                    delta=f"KD {returns_value:,.0f} returned",
-                    delta_color="inverse"  # Red = high return
-                )
-            else:
-                col4.metric(
-                    label="**Return Rate**",
-                    value="0.00%",
-                    delta="No returns",
-                    delta_color="normal"  # Green = good
-                )
-            
-            # === MINI TABS ===
-            mini_tab1, mini_tab2, mini_tab3, mini_tab4, mini_tab5 = st.tabs([
-                "Sales Trend", "RFM", "Visits", "Issues", "Actions"
-            ])
-
-            # ───────── Mini Tab 1: Sales Trend ─────────
-            with mini_tab1:
-                daily = cust_sales.groupby(cust_sales[date_col].dt.date)[amount_col].sum().reset_index()
-                daily.columns = ["Date", "Sales"]
-                fig = px.line(daily, x="Date", y="Sales", title="Sales Trend", markers=True)
-                fig.update_layout(height=300)
+            if not daily.empty:
+                fig = px.line(daily, x="Date", y="Sales", title="Customer Sales Trend", markers=True)
+                fig.update_layout(height=360, template="plotly_white")
                 st.plotly_chart(fig, use_container_width=True)
 
-            # ───────── Mini Tab 2: RFM ─────────
-            with mini_tab2:
-                if selected_cust in rfm_agg.index:
-                    r = rfm_agg.loc[selected_cust]
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("**Recency**", f"{int(r['Recency'])} days")
-                    c2.metric("**Frequency**", f"{int(r['Frequency'])}")
-                    c3.metric("**Monetary**", f"KD {r['Monetary']:,.0f}")
-                    st.success(f"**Segment:** {r['Segment']}")
-                else:
-                    st.info("RFM not calculated yet")
+        # --------------------------------------------------------
+        # RFM
+        # --------------------------------------------------------
+        with mini2:
+            cust_rfm_src = sales_src.copy()
+            cust_rfm_src = cust_rfm_src.dropna(subset=[date360_col]).copy()
 
-            # ───────── Mini Tab 3: Visits ─────────
-            with mini_tab3:
-                if driver_col and driver_col in cust_sales.columns:
-                    visits = cust_sales[[date_col, driver_col]].drop_duplicates()
-                    visits = visits.sort_values(date_col, ascending=False).head(20)
-                    visits["Date"] = visits[date_col].dt.strftime("%Y-%m-%d")
-                    visits["Salesman"] = visits[driver_col]
-                    st.dataframe(visits[["Date", "Salesman"]], use_container_width=True, hide_index=True)
-                else:
-                    st.info("No salesman data available")
+            cust_rfm_grp = cust_rfm_src.groupby(cust360_col).agg(
+                Recency=(date360_col, lambda x: (pd.Timestamp.today().normalize() - x.max().normalize()).days if len(x) else 9999),
+                Frequency=(date360_col, "count"),
+                Monetary=(amount360_col, "sum")
+            )
 
-                        # ───────── Mini Tab 4: Issues (Returns + Material Details) ─────────
-                        # ───────── Mini Tab 4: Issues (Returns + Material Details) ─────────
-            with mini_tab4:
-                issues = cust_sales[returns_mask]
+            if selected_cust in cust_rfm_grp.index:
+                r = cust_rfm_grp.loc[selected_cust]
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Recency", f"{int(r['Recency'])} days")
+                c2.metric("Frequency", f"{int(r['Frequency'])}")
+                c3.metric("Monetary", f"KD {r['Monetary']:,.0f}")
+            else:
+                st.info("RFM not calculated for this customer.")
 
-                if not issues.empty:
-                    # Main returns summary by invoice/date
-                    st.error(f"**Returns: KD {returns_value:,.0f} ({return_rate:.2f}%)**")
-                    st.dataframe(
-                        issues[[date_col, "Billing Type", amount_col]].rename(
-                            columns={date_col: "Billing Date", amount_col: "Return Value"}
-                        ),
-                        use_container_width=True
-                    , hide_index=True)
+        # --------------------------------------------------------
+        # Branch & Salesman
+        # --------------------------------------------------------
+        with mini3:
+            left, right = st.columns(2)
 
-                    # ---- Return Material Details table ----
-                    st.markdown("#### Return Material Details")
+            with left:
+                st.markdown("#### Branch Breakdown")
+                branch_tbl = (
+                    cust_sales.groupby(branch360_col, dropna=False)
+                    .agg(Sales=(amount360_col, "sum"))
+                    .reset_index()
+                    .rename(columns={branch360_col: "Branch"})
+                    .sort_values("Sales", ascending=False)
+                )
 
-                    # Prefer Material Description-like columns first
-                    desc_candidates = [
-                        "Material Description",
-                        "Material Desc",
-                        "Material Description EN",
-                        "Material Description AR",
-                        "MAT Description",
-                    ]
-                    desc_col = None
-                    for c in desc_candidates:
-                        if c in issues.columns:
-                            desc_col = c
-                            break
+                total_branch_sales = float(branch_tbl["Sales"].sum()) if not branch_tbl.empty else 0.0
+                branch_tbl["Contribution %"] = np.where(
+                    total_branch_sales != 0,
+                    (branch_tbl["Sales"] / total_branch_sales) * 100,
+                    0.0
+                )
 
-                    # Fallback: if no description column, use material_col (code)
-                    if not desc_col and material_col and material_col in issues.columns:
-                        desc_col = material_col
+                st.dataframe(
+                    branch_tbl.style.format({
+                        "Sales": "{:,.0f}",
+                        "Contribution %": "{:.1f}%"
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-                    if desc_col:
-                        issues_mat = issues.copy()
-                        issues_mat[amount_col] = (
-                            pd.to_numeric(issues_mat[amount_col], errors="coerce")
-                            .fillna(0.0)
-                            .abs()
-                        )
+            with right:
+                st.markdown("#### Salesman Breakdown")
+                salesman_tbl = (
+                    cust_sales.groupby(driver360_col, dropna=False)
+                    .agg(Sales=(amount360_col, "sum"))
+                    .reset_index()
+                    .rename(columns={driver360_col: "Salesman"})
+                    .sort_values("Sales", ascending=False)
+                )
 
-                        # Group by the chosen description column
-                        mat_summary = (
-                            issues_mat
-                            .groupby(desc_col)[amount_col]
-                            .sum()
-                            .reset_index()
-                            .rename(columns={desc_col: "Material Description", amount_col: "Return Value"})
-                            .sort_values("Return Value", ascending=False)
-                        )
+                total_salesman_sales = float(salesman_tbl["Sales"].sum()) if not salesman_tbl.empty else 0.0
+                salesman_tbl["Contribution %"] = np.where(
+                    total_salesman_sales != 0,
+                    (salesman_tbl["Sales"] / total_salesman_sales) * 100,
+                    0.0
+                )
 
-                        # Add Total row at end
-                        total_val = mat_summary["Return Value"].sum()
-                        total_row = {
-                            "Material Description": "Total",
-                            "Return Value": total_val
-                        }
-                        mat_summary = pd.concat(
-                            [mat_summary, pd.DataFrame([total_row])],
-                            ignore_index=True
-                        )
+                st.dataframe(
+                    salesman_tbl.style.format({
+                        "Sales": "{:,.0f}",
+                        "Contribution %": "{:.1f}%"
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-                        st.dataframe(mat_summary, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("No material description column found for returns.")
-                else:
-                    st.success("**No Returns – Perfect!**")
+        # --------------------------------------------------------
+        # Products / SKU
+        # --------------------------------------------------------
+        with mini4:
+            sku_tbl = (
+                cust_sales.groupby(material360_col, dropna=False)
+                .agg(Sales=(amount360_col, "sum"))
+                .reset_index()
+                .rename(columns={material360_col: "SKU"})
+                .sort_values("Sales", ascending=False)
+            )
 
-            # ───────── Mini Tab 5: Actions ─────────
-            with mini_tab5:
-                st.markdown("#### **Smart Actions**")
-                actions = []
-                if days_since > 30:
-                    actions.append("**URGENT:** Schedule visit TODAY")
-                if return_rate > 10:
-                    actions.append("Call about quality issues")
-                if total_sales > 5000:
-                    actions.append("Offer premium products")
-                if order_count > 15:
-                    actions.append("Send loyalty reward")
+            total_sku_sales = float(sku_tbl["Sales"].sum()) if not sku_tbl.empty else 0.0
+            sku_tbl["Contribution %"] = np.where(
+                total_sku_sales != 0,
+                (sku_tbl["Sales"] / total_sku_sales) * 100,
+                0.0
+            )
 
-                for a in actions:
-                    st.markdown(f"• {a}")
+            st.dataframe(
+                sku_tbl.style.format({
+                    "Sales": "{:,.0f}",
+                    "Contribution %": "{:.1f}%"
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
 
-                note_key = f"note_{selected_cust}"
-                note = st.text_area("**Add Note**", value=st.session_state.get(note_key, ""), height=80)
-                if st.button("**Save Note**", type="primary"):
-                    st.session_state[note_key] = note
-                    st.success("Note saved!")
+            top10_sku = sku_tbl.head(10).sort_values("Sales", ascending=True)
+            if not top10_sku.empty:
+                fig_sku = go.Figure(go.Bar(
+                    x=top10_sku["Sales"],
+                    y=top10_sku["SKU"],
+                    orientation="h",
+                    text=[f"KD {v:,.0f}" for v in top10_sku["Sales"]],
+                    textposition="outside"
+                ))
+                fig_sku.update_layout(
+                    title="Top 10 SKU",
+                    height=420,
+                    template="plotly_white",
+                    xaxis_title="Sales (KD)",
+                    yaxis_title=""
+                )
+                st.plotly_chart(fig_sku, use_container_width=True)
 
-                # Download Profile
-                profile = pd.DataFrame({
-                    "Metric": ["Customer", "Total Sales", "Orders", "Last Visit", "Days Since", "Return Rate %", "Note"],
+        # --------------------------------------------------------
+        # Billing & Support
+        # --------------------------------------------------------
+        with mini5:
+            bill_left, bill_right = st.columns(2)
+
+            with bill_left:
+                st.markdown("#### Billing Type Summary")
+
+                billing_wide = cust_sales.pivot_table(
+                    index=None,
+                    columns="Billing Type",
+                    values=amount360_col,
+                    aggfunc="sum",
+                    fill_value=0
+                )
+
+                required_cols_raw = ["ZFR", "YKF2", "YKRE", "YKS1", "YKS2", "ZCAN", "ZRE"]
+                billing_wide = billing_wide.reindex(columns=required_cols_raw, fill_value=0)
+
+                display_df = billing_wide.rename(columns={"ZFR": "Presales", "YKF2": "HHT"})
+                display_df["Sales Total"] = billing_wide[["ZFR", "YKF2"]].sum(axis=1)
+                display_df["Return"] = billing_wide[["YKRE", "ZRE"]].sum(axis=1)
+                display_df["Return %"] = np.where(
+                    display_df["Sales Total"] != 0,
+                    (display_df["Return"].abs() / display_df["Sales Total"].abs() * 100).round(1),
+                    0
+                )
+                display_df["Cancel Total"] = billing_wide[["YKS1", "YKS2", "ZCAN"]].sum(axis=1).abs()
+
+                ordered_cols = [
+                    "Presales", "HHT", "Sales Total",
+                    "YKS1", "YKS2", "ZCAN",
+                    "Cancel Total", "YKRE", "ZRE",
+                    "Return", "Return %"
+                ]
+                billing_tbl = display_df.reindex(columns=ordered_cols, fill_value=0).reset_index(drop=True)
+
+                total_billing_sales = float(billing_tbl["Sales Total"].sum()) if "Sales Total" in billing_tbl.columns else 0.0
+                billing_tbl["Contribution %"] = np.where(
+                    total_billing_sales != 0,
+                    (billing_tbl["Sales Total"] / total_billing_sales) * 100,
+                    0.0
+                )
+
+                billing_tbl = apply_header_renames(billing_tbl)
+
+                st.dataframe(
+                    billing_tbl.style.format({
+                        "Presales": "{:,.0f}",
+                        "HHT": "{:,.0f}",
+                        "Sales Total": "{:,.0f}",
+                        "HHTCancel": "{:,.0f}",
+                        "WH1 Cancel": "{:,.0f}",
+                        "WH2 Cancel": "{:,.0f}",
+                        "Total Cancel": "{:,.0f}",
+                        "Salesman Return": "{:,.0f}",
+                        "Presales Return": "{:,.0f}",
+                        "Return": "{:,.0f}",
+                        "Return %": "{:.1f}%",
+                        "Contribution %": "{:.1f}%"
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            with bill_right:
+                st.markdown("#### Commercial Support Summary")
+                support_tbl = pd.DataFrame({
+                    "Metric": [
+                        "Net Sales",
+                        "Gross Sales",
+                        "Returns",
+                        "Cancel Value",
+                        "Invoice Discount",
+                        "Rebate %",
+                        "Rebate Value",
+                        "Allocated Rental (Period)"
+                    ],
                     "Value": [
-                        selected_cust,
-                        total_sales,
-                        order_count,
-                        last_visit.strftime("%Y-%m-%d") if pd.notna(last_visit) else "N/A",
-                        days_since,
-                        return_rate,
-                        note
+                        f"KD {net_sales:,.0f}",
+                        f"KD {gross_sales:,.0f}",
+                        f"KD {return_value:,.0f}",
+                        f"KD {cancel_value:,.0f}",
+                        f"KD {invoice_discount_val:,.0f}",
+                        f"{rebate_pct:.2f}%",
+                        f"KD {rebate_value_est:,.0f}",
+                        f"KD {rental_val:,.0f}",
                     ]
                 })
-                st.download_button(
-                    "**Download Profile (Excel)**",
-                    data=to_excel_bytes(profile),
-                    file_name=f"{selected_cust.replace(' ', '_')}_360.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                st.dataframe(support_tbl, use_container_width=True, hide_index=True)
+
+        # --------------------------------------------------------
+        # Actions & Download
+        # --------------------------------------------------------
+        with mini6:
+            st.markdown("#### Smart Actions")
+            actions = []
+
+            if days_since > 30:
+                actions.append("URGENT: Schedule customer visit immediately.")
+            if return_rate > 10:
+                actions.append("High return rate detected. Review product/service quality.")
+            if net_sales > 5000:
+                actions.append("Customer is valuable. Consider premium upsell / exclusive offer.")
+            if order_count > 15:
+                actions.append("High order activity. Loyalty or retention campaign recommended.")
+            if rebate_pct > 0 or rental_val > 0 or invoice_discount_val > 0:
+                actions.append("Commercial support exists. Review profitability after rebate/rental/discount.")
+
+            if actions:
+                for a in actions:
+                    st.markdown(f"• {a}")
+            else:
+                st.success("No urgent action flags for this customer.")
+
+            note_key = f"cust360_note_{selected_cust}"
+            note = st.text_area("Add Note", value=st.session_state.get(note_key, ""), height=100)
+
+            if st.button("💾 Save Customer 360 Note", key="save_cust360_note"):
+                st.session_state[note_key] = note
+                st.success("Customer 360 note saved!")
+
+            customer360_export = {
+                "Profile": pd.DataFrame({
+                    "Metric": [
+                        "Customer", "Start Date", "End Date", "Net Sales", "Gross Sales", "Returns",
+                        "Cancel Value", "Return Rate %", "Invoices", "Avg Invoice", "Qty Sold",
+                        "Last Visit", "Days Since Last Visit", "Rebate %", "Rebate Value",
+                        "Allocated Rental (Period)", "Invoice Discount", "Note"
+                    ],
+                    "Value": [
+                        selected_cust,
+                        str(start_dt.date()),
+                        str(end_dt.date()),
+                        net_sales,
+                        gross_sales,
+                        return_value,
+                        cancel_value,
+                        return_rate,
+                        order_count,
+                        avg_invoice,
+                        qty_sold,
+                        last_visit.strftime("%Y-%m-%d") if pd.notna(last_visit) else "N/A",
+                        days_since,
+                        rebate_pct,
+                        rebate_value_est,
+                        rental_val,
+                        invoice_discount_val,
+                        note
+                    ]
+                }),
+                "Branch Breakdown": branch_tbl if "branch_tbl" in locals() else pd.DataFrame(),
+                "Salesman Breakdown": salesman_tbl if "salesman_tbl" in locals() else pd.DataFrame(),
+                "SKU Breakdown": sku_tbl if "sku_tbl" in locals() else pd.DataFrame(),
+                "Billing Type Summary": billing_tbl if "billing_tbl" in locals() else pd.DataFrame(),
+                "Commercial Support": support_tbl if "support_tbl" in locals() else pd.DataFrame(),
+            }
+
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                for sheet_name, sheet_df in customer360_export.items():
+                    if sheet_df is None:
+                        sheet_df = pd.DataFrame()
+                    sheet_df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+            output.seek(0)
+
+            safe_customer_name = str(selected_cust).replace("/", "_").replace("\\", "_").replace(" ", "_")
+
+            st.download_button(
+                "⬇️ Download Customer 360 (Excel)",
+                data=output.getvalue(),
+                file_name=f"Customer360_{safe_customer_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 # --- Material Forecast Page ---
 elif choice == texts[lang]["material_forecast"]:
