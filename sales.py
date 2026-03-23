@@ -753,17 +753,42 @@ def load_data(file):
             target_df   = pd.read_excel(xls, sheet_name="Target")
             channels_df = pd.read_excel(xls, sheet_name="sales channels")
 
-            # ================= R&R SHEET (FIXED) =================
+            # ================= R&R SHEET (UPDATED) =================
             rr_df = pd.read_excel(xls, sheet_name="R&R") if "R&R" in xls.sheet_names else pd.DataFrame()
 
             if not rr_df.empty and "PY Name 1" in rr_df.columns:
                 rr_df["_py_name_norm"] = normalize_series(rr_df["PY Name 1"])
 
-                for col in ["Rebate %", "Display Rental value"]:
+                # numeric columns
+                for col in ["Rebate %", "Display Rental", "Display Rental value", "DN Spending"]:
                     if col in rr_df.columns:
-                        rr_df[col] = pd.to_numeric(rr_df[col], errors="coerce").fillna(0)
+                        rr_df[col] = pd.to_numeric(rr_df[col], errors="coerce").fillna(0.0)
+
+                # unify rental column name
+                if "Display Rental" in rr_df.columns and "Display Rental value" not in rr_df.columns:
+                    rr_df["Display Rental value"] = rr_df["Display Rental"]
+
+                if "Display Rental value" not in rr_df.columns:
+                    rr_df["Display Rental value"] = 0.0
+
+                if "Rebate %" not in rr_df.columns:
+                    rr_df["Rebate %"] = 0.0
+
+                if "DN Spending" not in rr_df.columns:
+                    rr_df["DN Spending"] = 0.0
+
+                # date columns
+                for dcol in ["Date From", "Date To"]:
+                    if dcol in rr_df.columns:
+                        rr_df[dcol] = pd.to_datetime(rr_df[dcol], errors="coerce")
                     else:
-                        rr_df[col] = 0.0
+                        rr_df[dcol] = pd.NaT
+
+                # category column
+                if "Category" in rr_df.columns:
+                    rr_df["Category"] = rr_df["Category"].astype(str).str.strip()
+                else:
+                    rr_df["Category"] = "All"
 
             # ================= OPTIONAL YTD =================
             ytd_df = pd.read_excel(xls, sheet_name="YTD") if "YTD" in xls.sheet_names else pd.DataFrame()
@@ -5643,46 +5668,40 @@ elif choice == texts[lang]["customer_insights"]:
             existing_days = [c for c in days_str if c in visit_df.columns]
             visit_df["Weekly Total"] = visit_df[existing_days].sum(axis=1) if existing_days else 0
 
-            # 4-week totals
-            end_date = pd.Timestamp(selected_date)
-            start_date = end_date - pd.Timedelta(weeks=4)
+            # 4 previous weeks + current week totals
+            end_date = pd.Timestamp(selected_date).normalize()
+            week_ranges = []
+            for i in range(4, -1, -1):
+                w_end = end_date - pd.Timedelta(days=i * 7)
+                w_start = w_end - pd.Timedelta(days=6)
+                label = f"Current Week ({w_start.strftime('%b %d')}-{w_end.strftime('%b %d')})" if i == 0 else f"Week -{i} ({w_start.strftime('%b %d')}-{w_end.strftime('%b %d')})"
+                week_ranges.append((label, w_start, w_end))
 
+            rolling_start = week_ranges[0][1]
             recent_sales = sales_df[
-                (sales_df[date_col] >= start_date) & (sales_df[date_col] <= end_date)
+                (sales_df[date_col] >= rolling_start) & (sales_df[date_col] <= end_date)
             ].copy()
 
             recent_sales[weekly_customer_col] = recent_sales[weekly_customer_col].astype(str)
             recent_sales[amount_col] = pd.to_numeric(recent_sales[amount_col], errors="coerce").fillna(0.0)
-            recent_sales["Week_Number"] = ((recent_sales[date_col] - start_date).dt.days // 7) + 1
-            recent_sales.loc[recent_sales["Week_Number"] > 4, "Week_Number"] = 4
 
-            week_totals = (
-                recent_sales.groupby([weekly_customer_col, "Week_Number"])[amount_col]
-                .sum()
-                .unstack(fill_value=0)
-                .reset_index()
-                .rename(columns={weekly_customer_col: "Customer"})
-            )
+            week_frames = []
+            for label, w_start, w_end in week_ranges:
+                wk = (
+                    recent_sales[(recent_sales[date_col] >= w_start) & (recent_sales[date_col] <= w_end)]
+                    .groupby(weekly_customer_col)[amount_col]
+                    .sum()
+                    .reset_index()
+                    .rename(columns={weekly_customer_col: "Customer", amount_col: label})
+                )
+                week_frames.append(wk)
 
-            week_cols = [c for c in week_totals.columns if c != "Customer"]
-            if not week_cols:
-                for i in range(1, 5):
-                    week_totals[i] = 0
-                week_cols = [1, 2, 3, 4]
-
-            ordered_week_cols = sorted(week_cols, key=lambda x: int(x))
-            week_totals = week_totals[["Customer"] + ordered_week_cols]
-
+            week_totals = pd.DataFrame({"Customer": customer_list.astype(str)})
             week_headers = []
-            for i in range(len(ordered_week_cols)):
-                wstart = (start_date + pd.Timedelta(days=i * 7)).strftime("%b %d")
-                wend = (start_date + pd.Timedelta(days=(i + 1) * 7 - 1)).strftime("%b %d")
-                week_headers.append(f"Week {i+1} ({wstart}-{wend})")
-
-            new_cols = ["Customer"] + week_headers
-            if len(new_cols) != len(week_totals.columns):
-                new_cols = ["Customer"] + [f"Week {i+1}" for i in range(len(week_totals.columns) - 1)]
-            week_totals.columns = new_cols
+            for wk in week_frames:
+                value_col = [c for c in wk.columns if c != "Customer"][0]
+                week_headers.append(value_col)
+                week_totals = week_totals.merge(wk, on="Customer", how="left")
 
             visit_df = visit_df.merge(week_totals, on="Customer", how="left").fillna(0.0)
 
@@ -6024,15 +6043,17 @@ elif choice == texts[lang]["customer_insights"]:
         return_rate = (return_abs / gross_sales * 100) if gross_sales > 0 else 0.0
 
         # --------------------------------------------------------
-        # R&R logic
+        # R&R logic (aligned with Profit & Margin page)
         # --------------------------------------------------------
         rebate_pct = 0.0
         rental_annual = 0.0
         rental_val = 0.0
+        dn_spending_val = 0.0
         rebate_value_est = 0.0
 
         if not rr_src.empty:
             rr_src = rr_src.copy()
+            price_df_360 = st.session_state.get("price_df", pd.DataFrame()).copy()
 
             rr_customer_col = None
             for c in ["PY Name 1", "PY Name1", "Customer", "Customer Name", "SP Name1", "SP Name 1"]:
@@ -6042,6 +6063,10 @@ elif choice == texts[lang]["customer_insights"]:
 
             rebate_col = None
             rental_col = None
+            dn_col = None
+            rr_from_col = None
+            rr_to_col = None
+            rr_cat_col = None
 
             for c in rr_src.columns:
                 lc = str(c).strip().lower()
@@ -6055,6 +6080,14 @@ elif choice == texts[lang]["customer_insights"]:
                     or "rental value" in lc
                 ):
                     rental_col = c
+                if dn_col is None and ("dn spending" in lc or lc == "dn" or "debit note spending" in lc or "dn spend" in lc):
+                    dn_col = c
+                if rr_from_col is None and lc in {"date from", "from date", "start date", "contract from"}:
+                    rr_from_col = c
+                if rr_to_col is None and lc in {"date to", "to date", "end date", "contract to"}:
+                    rr_to_col = c
+                if rr_cat_col is None and lc in {"category", "item category", "sales category", "material category", "group"}:
+                    rr_cat_col = c
 
             if rr_customer_col is not None:
                 rr_src["_cust_norm"] = (
@@ -6065,47 +6098,94 @@ elif choice == texts[lang]["customer_insights"]:
                     .str.replace(r"\s+", " ", regex=True)
                 )
 
-                if rebate_col is not None:
-                    rr_src[rebate_col] = pd.to_numeric(rr_src[rebate_col], errors="coerce").fillna(0.0)
+                rr_src["Rebate %"] = pd.to_numeric(rr_src[rebate_col], errors="coerce").fillna(0.0) if rebate_col is not None else 0.0
+                rr_src["Display Rental value"] = pd.to_numeric(rr_src[rental_col], errors="coerce").fillna(0.0) if rental_col is not None else 0.0
+                rr_src["DN Spending"] = pd.to_numeric(rr_src[dn_col], errors="coerce").fillna(0.0) if dn_col is not None else 0.0
+                rr_src["Date From"] = pd.to_datetime(rr_src[rr_from_col], errors="coerce").dt.normalize() if rr_from_col is not None else pd.NaT
+                rr_src["Date To"] = pd.to_datetime(rr_src[rr_to_col], errors="coerce").dt.normalize() if rr_to_col is not None else pd.NaT
+                if rr_cat_col is not None:
+                    rr_src["RR Category"] = rr_src[rr_cat_col].astype(str).str.strip().replace({"": "All", "nan": "All", "None": "All"}).fillna("All")
                 else:
-                    rr_src["__rebate__"] = 0.0
-                    rebate_col = "__rebate__"
+                    rr_src["RR Category"] = "All"
 
-                if rental_col is not None:
-                    rr_src[rental_col] = pd.to_numeric(rr_src[rental_col], errors="coerce").fillna(0.0)
-                else:
-                    rr_src["__rental__"] = 0.0
-                    rental_col = "__rental__"
+                cust_sales_rr = cust_sales.copy()
+                cust_sales_rr[date360_col] = pd.to_datetime(cust_sales_rr[date360_col], errors="coerce").dt.normalize()
+                cust_sales_rr[amount360_col] = pd.to_numeric(cust_sales_rr[amount360_col], errors="coerce").fillna(0.0)
+
+                # map category from price list using material
+                cust_sales_rr["Category"] = "Unmapped"
+                if (not price_df_360.empty) and material360_col and (material360_col in cust_sales_rr.columns) and ("Material Description" in price_df_360.columns):
+                    price_df_360 = price_df_360.copy()
+                    price_df_360["_mat_norm"] = price_df_360["Material Description"].astype(str).str.strip().str.upper()
+                    cust_sales_rr["_mat_norm"] = cust_sales_rr[material360_col].astype(str).str.strip().str.upper()
+                    price_cat_col = None
+                    for c in ["Category", "Item Category", "Sales Category", "Material Category", "Group"]:
+                        if c in price_df_360.columns:
+                            price_cat_col = c
+                            break
+                    if price_cat_col is not None:
+                        price_map_360 = price_df_360.drop_duplicates("_mat_norm").set_index("_mat_norm")
+                        cust_sales_rr["Category"] = cust_sales_rr["_mat_norm"].map(price_map_360[price_cat_col]).fillna("Unmapped")
 
                 rr_match = rr_src[rr_src["_cust_norm"] == selected_cust_norm].copy()
 
                 if not rr_match.empty:
-                    rr_first = rr_match.iloc[0]
-
-                    rebate_pct = float(pd.to_numeric(rr_first[rebate_col], errors="coerce")) if pd.notna(rr_first[rebate_col]) else 0.0
-                    rental_annual = float(pd.to_numeric(rr_first[rental_col], errors="coerce")) if pd.notna(rr_first[rental_col]) else 0.0
-
+                    applied_rebate_rates = []
                     period_days = max((end_dt - start_dt).days + 1, 1)
-                    year_factor = period_days / 365.0
-                    rental_val = rental_annual * year_factor
 
-        rebate_value_est = (max(net_sales, 0) * rebate_pct / 100.0) if rebate_pct > 0 else 0.0
+                    for _, rr_row in rr_match.iterrows():
+                        rebate_line_pct = float(rr_row.get("Rebate %", 0.0) or 0.0)
+                        rental_contract = float(rr_row.get("Display Rental value", 0.0) or 0.0)
+                        dn_contract = float(rr_row.get("DN Spending", 0.0) or 0.0)
+                        contract_from = pd.to_datetime(rr_row.get("Date From"), errors="coerce")
+                        contract_to = pd.to_datetime(rr_row.get("Date To"), errors="coerce")
+                        rr_cat = str(rr_row.get("RR Category", "All")).strip()
+
+                        row_mask = pd.Series(True, index=cust_sales_rr.index)
+                        if pd.notna(contract_from):
+                            row_mask &= cust_sales_rr[date360_col].ge(contract_from)
+                        if pd.notna(contract_to):
+                            row_mask &= cust_sales_rr[date360_col].le(contract_to)
+                        if rr_cat.upper() != "ALL":
+                            row_mask &= cust_sales_rr["Category"].astype(str).str.strip().str.lower().eq(rr_cat.lower())
+
+                        matched_sales = float(cust_sales_rr.loc[row_mask, amount360_col].sum())
+                        if rebate_line_pct != 0 and matched_sales != 0:
+                            rebate_value_est += matched_sales * rebate_line_pct / 100.0
+                            applied_rebate_rates.append(rebate_line_pct)
+
+                        if pd.notna(contract_from) and pd.notna(contract_to) and contract_to >= contract_from:
+                            contract_days = max((contract_to - contract_from).days + 1, 1)
+                            overlap_start = max(start_dt, contract_from)
+                            overlap_end = min(end_dt, contract_to)
+                            overlap_days = max((overlap_end - overlap_start).days + 1, 0) if overlap_end >= overlap_start else 0
+                            overlap_ratio = overlap_days / contract_days
+                        else:
+                            overlap_ratio = period_days / 365.0
+
+                        rental_val += rental_contract * overlap_ratio
+                        dn_spending_val += dn_contract * overlap_ratio
+                        rental_annual += rental_contract
+
+                    if applied_rebate_rates:
+                        rebate_pct = max(applied_rebate_rates)
 
         # --------------------------------------------------------
         # KPI strip (Gross Sales removed only)
         # --------------------------------------------------------
-        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
         k1.metric("Net Sales", f"KD {net_sales:,.0f}")
         k2.metric("Returns", f"KD {return_value:,.0f}")
         k3.metric("Return Rate", f"{return_rate:.2f}%")
         k4.metric("Rental", f"KD {rental_val:,.0f}")
-        k5.metric("Rebate %", f"{rebate_pct:.2f}%")
-        k6.metric("Invoice Discount", f"KD {invoice_discount_val:,.0f}")
+        k5.metric("DN Spending", f"KD {dn_spending_val:,.0f}")
+        k6.metric("Rebate %", f"{rebate_pct:.2f}%")
+        k7.metric("Invoice Discount", f"KD {invoice_discount_val:,.0f}")
 
-        k7, k8, k9 = st.columns(3)
-        k7.metric("Invoices", f"{order_count:,}")
-        k8.metric("Avg Invoice", f"KD {avg_invoice:,.0f}")
-        k9.metric("Last Visit", last_visit.strftime("%Y-%m-%d") if pd.notna(last_visit) else "-")
+        k8, k9, k10 = st.columns(3)
+        k8.metric("Invoices", f"{order_count:,}")
+        k9.metric("Avg Invoice", f"KD {avg_invoice:,.0f}")
+        k10.metric("Last Visit", last_visit.strftime("%Y-%m-%d") if pd.notna(last_visit) else "-")
 
         st.caption(
             f"Source: {data_source_choice} | Customer: {selected_cust} | Period: {start_dt.date()} to {end_dt.date()} | "
@@ -6342,7 +6422,8 @@ elif choice == texts[lang]["customer_insights"]:
                         "Invoice Discount",
                         "Rebate %",
                         "Rebate Value",
-                        "Allocated Rental (Period)"
+                        "Allocated Rental (Period)",
+                        "DN Spending"
                     ],
                     "Value": [
                         f"KD {net_sales:,.0f}",
@@ -6353,6 +6434,7 @@ elif choice == texts[lang]["customer_insights"]:
                         f"{rebate_pct:.2f}%",
                         f"KD {rebate_value_est:,.0f}",
                         f"KD {rental_val:,.0f}",
+                        f"KD {dn_spending_val:,.0f}",
                     ]
                 })
                 st.dataframe(support_tbl, use_container_width=True, hide_index=True)
@@ -6394,7 +6476,7 @@ elif choice == texts[lang]["customer_insights"]:
                         "Customer", "Start Date", "End Date", "Net Sales", "Gross Sales", "Returns",
                         "Cancel Value", "Return Rate %", "Invoices", "Avg Invoice", "Qty Sold",
                         "Last Visit", "Days Since Last Visit", "Rebate %", "Rebate Value",
-                        "Allocated Rental (Period)", "Invoice Discount", "Note"
+                        "Allocated Rental (Period)", "DN Spending", "Invoice Discount", "Note"
                     ],
                     "Value": [
                         selected_cust,
@@ -6413,6 +6495,7 @@ elif choice == texts[lang]["customer_insights"]:
                         rebate_pct,
                         rebate_value_est,
                         rental_val,
+                        dn_spending_val,
                         invoice_discount_val,
                         note
                     ]
@@ -6896,101 +6979,153 @@ elif choice == "💰 Profit & Margin":
         df_val["⚠ Pack Missing (KAR)"] = False
 
     # ============================================================
-    # R&R (Rebate % + Display Rental value)
+    # R&R (Rebate % + Display Rental value + DN Spending)
+    # customer + contract date + category logic
     # ============================================================
     rr_df = st.session_state.get("rr_df", pd.DataFrame())
 
     RR_CUST_COL = find_column(rr_df, ["PY Name 1", "Customer", "Customer Name"])
     REBATE_COL  = find_column(rr_df, ["Rebate %", "Rebate", "Rebate Percent", "Rebate%"])
     RENTAL_COL  = find_column(rr_df, ["Display Rental value", "Display Rental", "Rental", "Annual Rental", "Rental Value"])
+    DN_COL      = find_column(rr_df, ["DN Spending", "DN", "Debit Note Spending", "DN Spend"])
+    RR_FROM_COL = find_column(rr_df, ["Date From", "From Date", "Start Date", "Contract From"])
+    RR_TO_COL   = find_column(rr_df, ["Date To", "To Date", "End Date", "Contract To"])
+    RR_CAT_COL  = find_column(rr_df, ["Category", "Item Category", "Sales Category", "Material Category", "Group"])
 
     df_val["Rebate %"] = 0.0
     df_val["Display Rental value"] = 0.0
+    df_val["DN Spending"] = 0.0
+    df_val["Rebate Value"] = 0.0
+    df_val["Allocated Rental"] = 0.0
+    df_val["Allocated DN Spending"] = 0.0
+    df_val["Rebate Applied"] = False
+
+    report_start = pd.to_datetime(start_date).normalize()
+    report_end = pd.to_datetime(end_date).normalize()
+    selected_period_days = max((report_end - report_start).days + 1, 1)
 
     if not rr_df.empty and RR_CUST_COL and CUSTOMER_COL:
         rr_tmp = rr_df.copy()
         rr_tmp["_py_name_norm"] = rr_tmp[RR_CUST_COL].astype(str).str.strip().str.upper()
 
-        if REBATE_COL:
-            rr_tmp["Rebate %"] = pd.to_numeric(rr_tmp[REBATE_COL], errors="coerce").fillna(0)
+        rr_tmp["Rebate %"] = pd.to_numeric(rr_tmp[REBATE_COL], errors="coerce").fillna(0.0) if REBATE_COL else 0.0
+        rr_tmp["Display Rental value"] = pd.to_numeric(rr_tmp[RENTAL_COL], errors="coerce").fillna(0.0) if RENTAL_COL else 0.0
+        rr_tmp["DN Spending"] = pd.to_numeric(rr_tmp[DN_COL], errors="coerce").fillna(0.0) if DN_COL else 0.0
+
+        if RR_FROM_COL:
+            rr_tmp["Date From"] = pd.to_datetime(rr_tmp[RR_FROM_COL], errors="coerce").dt.normalize()
         else:
-            rr_tmp["Rebate %"] = 0.0
+            rr_tmp["Date From"] = pd.NaT
 
-        if RENTAL_COL:
-            rr_tmp["Display Rental value"] = pd.to_numeric(rr_tmp[RENTAL_COL], errors="coerce").fillna(0)
+        if RR_TO_COL:
+            rr_tmp["Date To"] = pd.to_datetime(rr_tmp[RR_TO_COL], errors="coerce").dt.normalize()
         else:
-            rr_tmp["Display Rental value"] = 0.0
+            rr_tmp["Date To"] = pd.NaT
 
-        rr_tmp = rr_tmp.drop_duplicates("_py_name_norm", keep="first")
-        rr_map = rr_tmp.set_index("_py_name_norm")[["Rebate %", "Display Rental value"]]
+        if RR_CAT_COL:
+            rr_tmp["RR Category"] = rr_tmp[RR_CAT_COL].astype(str).str.strip()
+        else:
+            rr_tmp["RR Category"] = "All"
 
-        df_val["Rebate %"] = df_val["_py_name_norm"].map(rr_map["Rebate %"]).fillna(0.0)
-        df_val["Display Rental value"] = df_val["_py_name_norm"].map(rr_map["Display Rental value"]).fillna(0.0)
+        rr_tmp["RR Category"] = rr_tmp["RR Category"].replace({"": "All", "nan": "All", "None": "All"})
+        rr_tmp = rr_tmp.reset_index(drop=True)
+        rr_tmp["_rr_id"] = rr_tmp.index.astype(int)
 
-    # ============================================================
-    # REBATE LOGIC — CUSTOMER NET SALES BASIS
-    # ============================================================
-    cust_net_sales = (
-        df_val.groupby("_py_name_norm")[NET_COL]
-        .sum()
-    )
+        if DATE_COL in df_val.columns:
+            df_val[DATE_COL] = pd.to_datetime(df_val[DATE_COL], errors="coerce").dt.normalize()
 
-    cust_rebate_pct = (
-        df_val.groupby("_py_name_norm")["Rebate %"]
-        .first()
-        .fillna(0)
-    )
+        # track top-line matched contract values for easier row visibility
+        def _row_contract_values(row):
+            cust = str(row.get("_py_name_norm", "")).strip().upper()
+            bill_dt = pd.to_datetime(row.get(DATE_COL), errors="coerce")
+            cat = str(row.get("Category", "Unmapped")).strip().lower()
 
-    # safer: rebate never below zero
-    cust_rebate_value = ((cust_net_sales.clip(lower=0)) * (cust_rebate_pct / 100.0)).fillna(0.0)
+            rr_match = rr_tmp[rr_tmp["_py_name_norm"] == cust].copy()
+            if rr_match.empty or pd.isna(bill_dt):
+                return pd.Series([0.0, 0.0, 0.0])
 
-    df_val["_cust_rebate_total"] = df_val["_py_name_norm"].map(cust_rebate_value).fillna(0.0)
+            rr_match = rr_match[
+                ((rr_match["Date From"].isna()) | (bill_dt >= rr_match["Date From"])) &
+                ((rr_match["Date To"].isna()) | (bill_dt <= rr_match["Date To"]))
+            ].copy()
 
-    cust_pos_sales_for_rebate = (
-        df_val[df_val[NET_COL] > 0]
-        .groupby("_py_name_norm")[NET_COL]
-        .sum()
-    )
+            if rr_match.empty:
+                return pd.Series([0.0, 0.0, 0.0])
 
-    df_val["_cust_pos_sales_for_rebate"] = df_val["_py_name_norm"].map(cust_pos_sales_for_rebate).fillna(0.0)
+            rr_match = rr_match[
+                (rr_match["RR Category"].astype(str).str.strip().str.upper() == "ALL") |
+                (rr_match["RR Category"].astype(str).str.strip().str.lower() == cat)
+            ].copy()
 
-    df_val["_rebate_share"] = np.where(
-        (df_val[NET_COL] > 0) & (df_val["_cust_pos_sales_for_rebate"] > 0),
-        df_val[NET_COL] / df_val["_cust_pos_sales_for_rebate"],
-        0.0
-    )
+            if rr_match.empty:
+                return pd.Series([0.0, 0.0, 0.0])
 
-    df_val["Rebate Value"] = (
-        df_val["_cust_rebate_total"] * df_val["_rebate_share"]
-    ).fillna(0.0)
+            return pd.Series([
+                float(rr_match["Rebate %"].sum()),
+                float(rr_match["Display Rental value"].sum()),
+                float(rr_match["DN Spending"].sum())
+            ])
 
-    df_val["Rebate Applied"] = df_val["Rebate Value"] != 0
+        df_val[["Rebate %", "Display Rental value", "DN Spending"]] = df_val.apply(_row_contract_values, axis=1)
 
-    # ============================================================
-    # Rental allocation
-    # annual rental -> selected period rental -> distribute by positive sales share
-    # ============================================================
-    period_days = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
-    year_factor = period_days / 365.0
+        # apply each contract row separately so Date From/To + Category are respected
+        for _, rr in rr_tmp.iterrows():
+            cust = str(rr.get("_py_name_norm", "")).strip().upper()
+            cat = str(rr.get("RR Category", "All")).strip()
+            rebate_pct = float(rr.get("Rebate %", 0.0) or 0.0)
+            rental_contract = float(rr.get("Display Rental value", 0.0) or 0.0)
+            dn_contract = float(rr.get("DN Spending", 0.0) or 0.0)
+            contract_from = pd.to_datetime(rr.get("Date From"), errors="coerce")
+            contract_to = pd.to_datetime(rr.get("Date To"), errors="coerce")
 
-    cust_pos_sales = (
-        df_val[df_val[NET_COL] > 0]
-        .groupby("_py_name_norm")[NET_COL]
-        .sum()
-    )
+            mask = df_val["_py_name_norm"].eq(cust)
 
-    df_val["_cust_pos_sales"] = df_val["_py_name_norm"].map(cust_pos_sales).fillna(0)
-    df_val["_period_rental"] = df_val["Display Rental value"] * year_factor
+            if pd.notna(contract_from):
+                mask &= df_val[DATE_COL].ge(contract_from)
+            if pd.notna(contract_to):
+                mask &= df_val[DATE_COL].le(contract_to)
 
-    df_val["_sales_share"] = np.where(
-        (df_val[NET_COL] > 0) & (df_val["_cust_pos_sales"] > 0),
-        df_val[NET_COL] / df_val["_cust_pos_sales"],
-        0.0
-    )
+            if str(cat).strip().upper() != "ALL":
+                mask &= df_val["Category"].astype(str).str.strip().str.lower().eq(str(cat).strip().lower())
 
-    df_val["Allocated Rental"] = (
-        df_val["_period_rental"] * df_val["_sales_share"]
-    ).fillna(0.0)
+            if not mask.any():
+                continue
+
+            pos_mask = mask & df_val[NET_COL].gt(0)
+            pos_sales_total = float(df_val.loc[pos_mask, NET_COL].sum())
+            net_sales_total = float(df_val.loc[mask, NET_COL].sum())
+
+            # Rebate on NET matched sales (same principle as old working file)
+            if rebate_pct != 0 and net_sales_total != 0:
+                df_val.loc[mask, "Rebate Value"] += (
+                    df_val.loc[mask, NET_COL] / net_sales_total
+                ) * (net_sales_total * rebate_pct / 100.0)
+
+            # Contract-period allocation for rental / DN spending
+            if pd.notna(contract_from) and pd.notna(contract_to) and contract_to >= contract_from:
+                contract_days = max((contract_to - contract_from).days + 1, 1)
+                overlap_start = max(report_start, contract_from)
+                overlap_end = min(report_end, contract_to)
+                overlap_days = max((overlap_end - overlap_start).days + 1, 0) if overlap_end >= overlap_start else 0
+                overlap_ratio = (overlap_days / contract_days) if contract_days > 0 else 0.0
+            else:
+                # fallback for old rows without dates
+                overlap_ratio = selected_period_days / 365.0
+
+            period_rental = rental_contract * overlap_ratio
+            period_dn = dn_contract * overlap_ratio
+
+            if pos_sales_total > 0:
+                if period_rental != 0:
+                    df_val.loc[pos_mask, "Allocated Rental"] += (
+                        df_val.loc[pos_mask, NET_COL] / pos_sales_total
+                    ) * period_rental
+                if period_dn != 0:
+                    df_val.loc[pos_mask, "Allocated DN Spending"] += (
+                        df_val.loc[pos_mask, NET_COL] / pos_sales_total
+                    ) * period_dn
+
+    df_val["Rebate Applied"] = df_val["Rebate Value"].abs() > 0
 
     # ─── Profit metrics ────────────────────────────────────────────────────
     df_val["Gross Profit"] = df_val[NET_COL] - df_val["Total Cost"].fillna(0)
@@ -7006,6 +7141,7 @@ elif choice == "💰 Profit & Margin":
         - df_val["Total Cost"].fillna(0)
         - df_val["Rebate Value"].fillna(0)
         - df_val["Allocated Rental"].fillna(0)
+        - df_val["Allocated DN Spending"].fillna(0)
     )
 
     # Margin on sales
@@ -7070,23 +7206,26 @@ elif choice == "💰 Profit & Margin":
 
     total_rebate = df_val["Rebate Value"].sum(min_count=1)
     total_rental = df_val["Allocated Rental"].sum(min_count=1)
+    total_dn = df_val["Allocated DN Spending"].sum(min_count=1)
 
     total_eff_profit = (
         df_val[NET_COL].sum()
         - df_val["Total Cost"].fillna(0).sum()
         - df_val["Rebate Value"].fillna(0).sum()
         - df_val["Allocated Rental"].fillna(0).sum()
+        - df_val["Allocated DN Spending"].fillna(0).sum()
     )
 
-    cA, cB, cC, cD = st.columns(4)
+    cA, cB, cC, cD, cE = st.columns(5)
     cA.metric("Rebate Value", fmt_num(total_rebate))
     cB.metric("Allocated Rental (Period)", fmt_num(total_rental))
-    cC.metric("Effective Profit (after R&R)", fmt_num(total_eff_profit))
+    cC.metric("Allocated DN Spending", fmt_num(total_dn))
+    cD.metric("Effective Profit (after R&R)", fmt_num(total_eff_profit))
 
     sales_only_net = df_val[df_val[NET_COL] > 0][NET_COL].sum()
     sales_only_eff_profit = df_val[df_val[NET_COL] > 0]["Effective Profit"].sum()
     eff_margin_pct = (sales_only_eff_profit / sales_only_net * 100) if sales_only_net else 0
-    cD.metric("Effective Margin % (Sales)", fmt_pct(eff_margin_pct))
+    cE.metric("Effective Margin % (Sales)", fmt_pct(eff_margin_pct))
 
     # ============================================================
     # Category Performance
@@ -7162,6 +7301,7 @@ elif choice == "💰 Profit & Margin":
                   Total_Cost=("Total Cost", "sum"),
                   Rebate_Value=("Rebate Value", "sum"),
                   Rental_Allocated=("Allocated Rental", "sum"),
+                  DN_Spending_Allocated=("Allocated DN Spending", "sum"),
                   Effective_Profit=("Effective Profit", "sum"),
               )
               .reset_index()
@@ -7228,7 +7368,7 @@ elif choice == "💰 Profit & Margin":
         MATERIAL_COL, QTY_COL, UOM_COL,
         "Cost Price", "Pack Size", "Total Cost",
         NET_COL, "Discount Value", "Discount %",
-        "Rebate %", "Rebate Value", "Display Rental value", "Allocated Rental",
+        "Rebate %", "Rebate Value", "Display Rental value", "Allocated Rental", "DN Spending", "Allocated DN Spending",
         "Gross Profit", "Margin %",
         "Effective Profit", "Effective Margin %",
         "Return on Cost %",
@@ -7250,7 +7390,7 @@ elif choice == "💰 Profit & Margin":
         num_cols=[
             "Cost Price", "Pack Size", "Total Cost", NET_COL,
             "Discount Value", "Rebate Value", "Display Rental value",
-            "Allocated Rental", "Gross Profit", "Effective Profit"
+            "Allocated Rental", "DN Spending", "Allocated DN Spending", "Gross Profit", "Effective Profit"
         ],
         pct_cols=[
             "Discount %", "Rebate %", "Margin %",
@@ -7279,6 +7419,7 @@ elif choice == "💰 Profit & Margin":
                       Rebate_Value=("Rebate Value", "sum"),
                       Rental_Allocated=("Allocated Rental", "sum"),
                       Effective_Profit=("Effective Profit", "sum"),
+                  DN_Spending_Allocated=("Allocated DN Spending", "sum"),
                   )
                   .reset_index()
         )
@@ -7290,6 +7431,7 @@ elif choice == "💰 Profit & Margin":
             cust_sum["Discount_Value"].abs()
             + cust_sum["Rebate_Value"].abs()
             + cust_sum["Rental_Allocated"].abs()
+            + cust_sum["DN_Spending_Allocated"].abs()
         )
 
         cust_sum["Leakage % (on Sales)"] = np.where(
@@ -7317,6 +7459,7 @@ elif choice == "💰 Profit & Margin":
             "Discount_Value": cust_sum["Discount_Value"].sum(),
             "Rebate_Value": cust_sum["Rebate_Value"].sum(),
             "Rental_Allocated": cust_sum["Rental_Allocated"].sum(),
+            "DN_Spending_Allocated": cust_sum["DN_Spending_Allocated"].sum(),
             "Total Leakage": cust_sum["Total Leakage"].sum(),
             "_pos_sales": cust_sum["_pos_sales"].sum(),
             "Effective_Profit": cust_sum["Effective_Profit"].sum(),
@@ -7343,7 +7486,7 @@ elif choice == "💰 Profit & Margin":
 
         show_cols = [
             CUSTOMER_COL, "Net_Sales", "Total_Cost",
-            "Discount_Value", "Rebate_Value", "Rental_Allocated",
+            "Discount_Value", "Rebate_Value", "Rental_Allocated", "DN_Spending_Allocated",
             "Total Leakage", "Leakage % (on Sales)",
             "Effective_Profit", "Effective Margin %", "Return on Cost %"
         ]
@@ -7352,7 +7495,7 @@ elif choice == "💰 Profit & Margin":
             cust_final[show_cols],
             num_cols=[
                 "Net_Sales", "Total_Cost", "Discount_Value", "Rebate_Value",
-                "Rental_Allocated", "Total Leakage", "Effective_Profit"
+                "Rental_Allocated", "DN_Spending_Allocated", "Total Leakage", "Effective_Profit"
             ],
             pct_cols=[
                 "Leakage % (on Sales)", "Effective Margin %", "Return on Cost %"
@@ -7401,6 +7544,7 @@ elif choice == "💰 Profit & Margin":
             Discount_Value=("Discount Value", "sum"),
             Rebate_Value=("Rebate Value", "sum"),
             Rental_Allocated=("Allocated Rental", "sum"),
+            DN_Spending_Allocated=("Allocated DN Spending", "sum"),
             Effective_Profit=("Effective Profit", "sum"),
         )
         .reset_index()
@@ -7441,6 +7585,7 @@ elif choice == "💰 Profit & Margin":
         "Discount_Value": margin_by_category["Discount_Value"].sum(),
         "Rebate_Value": margin_by_category["Rebate_Value"].sum(),
         "Rental_Allocated": margin_by_category["Rental_Allocated"].sum(),
+        "DN_Spending_Allocated": margin_by_category["DN_Spending_Allocated"].sum(),
         "Effective_Profit": margin_by_category["Effective_Profit"].sum(),
     }])
 
@@ -7486,6 +7631,7 @@ elif choice == "💰 Profit & Margin":
             "Discount %": "{:.0f}%",
             "Rebate_Value": "{:,.0f}",
             "Rental_Allocated": "{:,.0f}",
+            "DN_Spending_Allocated": "{:,.0f}",
             "Gross Profit": "{:,.0f}",
             "Margin %": "{:.0f}%",
             "Effective_Profit": "{:,.0f}",
@@ -7527,6 +7673,59 @@ elif choice == "💰 Profit & Margin":
         )
     else:
         st.info("Customer column not found for category matrix.")
+        
+    st.markdown("## 🏬 Customer × Category Commercial Allocation")
+
+    if CUSTOMER_COL and CUSTOMER_COL in df_val.columns:
+        cust_cat_support = (
+            df_val.groupby([CUSTOMER_COL, "Category"], dropna=False)
+                .agg(
+                    Net_Value=(NET_COL, "sum"),
+                    Discount_Value=("Discount Value", "sum"),
+                    Rebate_Value=("Rebate Value", "sum"),
+                    Rental_Allocated=("Allocated Rental", "sum"),
+                    DN_Spending_Allocated=("Allocated DN Spending", "sum"),
+                    Effective_Profit=("Effective Profit", "sum"),
+                )
+                .reset_index()
+        )
+
+        cust_cat_support["Total Commercial Support"] = (
+            cust_cat_support["Discount_Value"].abs()
+            + cust_cat_support["Rebate_Value"].abs()
+            + cust_cat_support["Rental_Allocated"].abs()
+            + cust_cat_support["DN_Spending_Allocated"].abs()
+        )
+
+        cust_cat_support["Commercial % on Sales"] = np.where(
+            cust_cat_support["Net_Value"] != 0,
+            cust_cat_support["Total Commercial Support"] / cust_cat_support["Net_Value"].abs() * 100,
+            0.0
+        )
+
+        cust_cat_support["Effective Margin %"] = np.where(
+            cust_cat_support["Net_Value"] != 0,
+            cust_cat_support["Effective_Profit"] / cust_cat_support["Net_Value"] * 100,
+            0.0
+        )
+
+        st.dataframe(
+            cust_cat_support.sort_values("Total Commercial Support", ascending=False).head(300).style.format({
+                "Net_Value": "{:,.0f}",
+                "Discount_Value": "{:,.0f}",
+                "Rebate_Value": "{:,.0f}",
+                "Rental_Allocated": "{:,.0f}",
+                "DN_Spending_Allocated": "{:,.0f}",
+                "Total Commercial Support": "{:,.0f}",
+                "Commercial % on Sales": "{:.2f}%",
+                "Effective_Profit": "{:,.0f}",
+                "Effective Margin %": "{:.2f}%"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("Customer column not found for Customer × Category Commercial Allocation.")
 
     # ─── Downloads ─────────────────────────────────────────────────────────
     st.markdown("### ⬇️ Export")
